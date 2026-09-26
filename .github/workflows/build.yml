@@ -38,6 +38,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: NSE_Bullish_Scanner_Update.zip
-          tag_name: v3.4.2
+          tag_name: v3.4.3
           generate_release_notes: true
           fail_on_unmatched_files: true
