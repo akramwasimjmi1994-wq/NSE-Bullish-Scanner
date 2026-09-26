@@ -1,6 +1,6 @@
 {
-  "version": "3.4.3",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.3/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.4.4",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.4/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Fix backtest tree references and add active navigation styling."
+  "notes": "Fix stock data extraction with individual fallback retries and synchronize scanner, dashboard, trade setup and backtest signal logic."
 }
