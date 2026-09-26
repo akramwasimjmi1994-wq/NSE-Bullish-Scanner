@@ -1,6 +1,6 @@
 {
-  "version": "3.4.1",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.1/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.4.2",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.2/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Fix startup crash from missing page builders; retains Signal Engine v2 composite scoring and backtest integration."
+  "notes": "Fix startup crash by restoring missing show_page navigation method."
 }
