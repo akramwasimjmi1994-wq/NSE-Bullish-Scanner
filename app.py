@@ -382,7 +382,136 @@ class App(tk.Tk):
         self.detail_setup=tk.StringVar(value="Trade setup will load after selecting a stock.")
         tk.Label(right,textvariable=self.detail_setup,bg="#1e222d",fg="#787b86",wraplength=320,justify="left").pack(anchor="w",padx=18,pady=14)
 
-        self.show_page("scanner")
+        self.build_dashboard_page(dash); self.build_paper_page(paper); self.build_backtest_page(bt); self.build_setup_page(setup); self.show_page("scanner")
+    def on_stock_select(self,event=None):
+        sel=self.tree.selection()
+        if not sel: return
+        vals=self.tree.item(sel[0],"values")
+        if not vals: return
+        self.detail_symbol.set(str(vals[0]))
+        self.detail_signal.set(f"Signal: {vals[11]}  |  Score: {vals[2]}/7")
+        for key,val in zip(["price","score","rsi","adx","relvol","ema20","ema50","vwap","st","macd"],vals[:10]):
+            self.detail_vars[key].set(str(val))
+        self.detail_vars["macdsig"].set("Loading...")
+        self.detail_setup.set("Loading Trade Setup...")
+        threading.Thread(target=self.detail_worker,args=(str(vals[0]),self.tf.get()),daemon=True).start()
+
+    def detail_worker(self,sym,tf):
+        try: self.q.put(("detail",trade_setup(sym,tf)))
+        except Exception: self.q.put(("detail_error",""))
+
+    def use_selected_stock(self):
+        sel=self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Trade Setup","Select a stock in Live Scanner first.")
+            return
+        vals=self.tree.item(sel[0],"values")
+        if vals:
+            self.setup_symbol.delete(0,"end"); self.setup_symbol.insert(0,vals[0])
+
+    def calculate_setup(self):
+        sym=self.setup_symbol.get().strip().upper()
+        if not sym:
+            messagebox.showinfo("Trade Setup","Enter an NSE stock symbol, for example RELIANCE.")
+            return
+        self.setup_summary.config(text=f"Calculating setup for {sym}...")
+        threading.Thread(target=self.setup_worker,args=(sym,self.setup_tf.get()),daemon=True).start()
+
+    def setup_worker(self,sym,tf):
+        try:
+            result=trade_setup(sym,tf)
+            self.q.put(("setup",result))
+        except Exception as e:
+            log("trade_setup: "+traceback.format_exc())
+            self.q.put(("msg",f"Trade setup failed for {sym}:\n{e}"))
+
+
+    def start_dashboard(self):
+        self.dash_running=True; self.dash_status.config(text="● Running"); self.dash_worker()
+
+    def stop_dashboard(self):
+        self.dash_running=False; self.dash_status.config(text="● Stopped")
+
+    def dash_worker(self):
+        if not getattr(self,"dash_running",False): return
+        threading.Thread(target=self.dashboard_fetch_worker,daemon=True).start()
+
+    def dashboard_fetch_worker(self):
+        try:
+            universe=self.dash_u.get(); tf=self.dash_tf.get(); minimum=self.dash_score.get()
+            symbols=get_index_symbols(universe)
+            interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[tf]
+            period={"15 min":"60d","1 hour":"730d","1 day":"1y"}[tf]
+            results=[]
+            for i in range(0,len(symbols),75):
+                if not getattr(self,"dash_running",False): break
+                data_map=fetch_batch(symbols[i:i+75],interval,period)
+                for sym,d in data_map.items():
+                    try:
+                        if len(d)<60: continue
+                        cd=calc(d); x=cd.iloc[-1]
+                        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
+                        score=int(sum(bool(v) for v in cond)); bullish=bool(x.STDir==1)
+                        atrv=float(atr(cd,14).iloc[-1]); price=float(x.Close)
+                        results.append({"symbol":sym,"price":price,"score":score,"signal":"BUY" if score>=minimum and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),"rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),"st":"BULLISH" if bullish else "BEARISH","entry":price,"stop":max(.01,price-1.5*atrv),"target":price+3*atrv,"time":str(cd.index[-1])})
+                    except Exception as e: log(f"dashboard {sym}: {e}")
+            results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="EXIT" else 2,-r["score"],r["symbol"]))
+            self.q.put(("dashboard",results))
+        except Exception as e:
+            log("dashboard_worker: "+traceback.format_exc()); self.q.put(("msg",f"Dashboard refresh failed:\n{e}"))
+
+    def dashboard_render(self,results):
+        for item in self.dash_tree.get_children(): self.dash_tree.delete(item)
+        buys=sum(r["signal"]=="BUY" for r in results); exits=sum(r["signal"]=="EXIT" for r in results); watches=sum(r["signal"]=="WATCH" for r in results)
+        for r in results[:100]:
+            self.dash_tree.insert("", "end", values=(r["symbol"],f"{r['price']:.2f}",r["score"],r["signal"],f"{r['rsi']:.1f}",f"{r['adx']:.1f}",f"{r['relvol']:.2f}",r["st"],f"{r['entry']:.2f}",f"{r['stop']:.2f}",f"{r['target']:.2f}",r["time"]))
+        self.dash_kpis["buy"].set(str(buys)); self.dash_kpis["exit"].set(str(exits)); self.dash_kpis["watch"].set(str(watches))
+        self.update_paper_positions()
+        self.dash_status.config(text=f"● Updated {datetime.now():%H:%M:%S} | {len(results)} stocks")
+        if getattr(self,"dash_running",False): self.after(max(15,int(self.dash_refresh.get()))*1000,self.dash_worker)
+
+    def paper_order(self,action):
+        sym=self.paper_symbol.get().strip().upper(); qty=int(self.paper_qty.get() or 0)
+        if not sym or qty<=0: messagebox.showinfo("Paper Trading","Enter a valid stock and quantity."); return
+        try: price=float(self.paper_price.get()) if self.paper_price.get().strip() else None
+        except Exception: price=None
+        if price is None or price<=0:
+            try:
+                d=fetch(sym,"15m",period="5d"); price=float(d.Close.iloc[-1]) if not d.empty else 0
+            except Exception: price=0
+        if price<=0: messagebox.showerror("Paper Trading","Could not get a price. Enter the price manually."); return
+        if action=="BUY":
+            cost=price*qty
+            if cost>self.paper_cash: messagebox.showerror("Paper Trading",f"Insufficient paper cash. Available ₹{self.paper_cash:,.2f}."); return
+            p=self.paper_positions.get(sym,{"qty":0,"avg":0.0}); newqty=p["qty"]+qty; p["avg"]=((p["avg"]*p["qty"])+(price*qty))/newqty; p["qty"]=newqty; self.paper_positions[sym]=p; self.paper_cash-=cost; realized=0.0
+        else:
+            p=self.paper_positions.get(sym)
+            if not p or p["qty"]<qty: messagebox.showerror("Paper Trading","You do not hold enough shares to sell."); return
+            realized=(price-p["avg"])*qty; self.paper_realized+=realized; self.paper_cash+=price*qty; p["qty"]-=qty
+            if p["qty"]==0: del self.paper_positions[sym]
+        stamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.paper_trades.append((stamp,action,sym,qty,price,price*qty,realized))
+        self.paper_trades_tree.insert("",0,values=(stamp,action,sym,qty,f"{price:.2f}",f"₹{price*qty:,.2f}",f"₹{realized:,.2f}"))
+        self.paper_status.config(text=f"{action} {qty} {sym} @ ₹{price:.2f} — PAPER ONLY")
+        self.update_paper_positions()
+
+    def refresh_paper_prices(self):
+        self.update_paper_positions(force=True)
+
+    def update_paper_positions(self,force=False):
+        total_unreal=0.0; invested=0.0
+        for item in self.paper_tree.get_children(): self.paper_tree.delete(item)
+        for sym,p in list(getattr(self,"paper_positions",{}).items()):
+            try:
+                d=fetch(sym,"15m",period="5d"); ltp=float(d.Close.iloc[-1]) if not d.empty else p["avg"]
+            except Exception: ltp=p["avg"]
+            inv=p["avg"]*p["qty"]; mv=ltp*p["qty"]; pnl=mv-inv; invested+=inv; total_unreal+=pnl
+            self.paper_tree.insert("", "end", values=(sym,p["qty"],f"{p['avg']:.2f}",f"{ltp:.2f}",f"₹{inv:,.2f}",f"₹{mv:,.2f}",f"₹{pnl:,.2f}",f"{(pnl/inv*100 if inv else 0):.2f}%"))
+        total=self.paper_realized+total_unreal
+        self.paper_summary.config(text=f"Cash: ₹{self.paper_cash:,.2f} | Invested: ₹{invested:,.2f} | Realized P&L: ₹{self.paper_realized:,.2f} | Unrealized P&L: ₹{total_unreal:,.2f} | Total P&L: ₹{total:,.2f}")
+        if hasattr(self,"dash_kpis"):
+            self.dash_kpis["open"].set(f"₹{total_unreal:,.0f}"); self.dash_kpis["realized"].set(f"₹{self.paper_realized:,.0f}"); self.dash_kpis["total"].set(f"₹{total:,.0f}")
+
     def use_selected_stock(self):
         sel=self.tree.selection()
         if not sel:
@@ -605,6 +734,10 @@ class App(tk.Tk):
                 elif typ=="msg": messagebox.showinfo("NSE Bullish Scanner",data)
                 elif typ=="dashboard":
                     self.dashboard_render(data)
+                elif typ=="detail":
+                    r=data; self.detail_vars["macdsig"].set(f"{r['macd_signal']:.3f}"); self.detail_setup.set(f"Entry Rs.{r['entry']:.2f} | Stop Rs.{r['stop']:.2f} | Target Rs.{r['target']:.2f} | R:R 1:{r['rr']:.2f}")
+                elif typ=="detail_error":
+                    self.detail_setup.set("Trade setup unavailable.")
                 elif typ=="setup":
                     r=data
                     self.setup_summary.config(text=f"{r['symbol']} | {r['supertrend']} | Data as of {r['time']}")
