@@ -207,12 +207,35 @@ def fetch_historical_market_regime(start,end):
         return pd.DataFrame()
 
 def fetch(sym,interval,period=None,start=None,end=None):
+    """Fetch one NSE symbol with a hard network timeout.
+    Uses yf.download rather than Ticker.history so a stalled Yahoo request
+    cannot leave a scanner worker waiting indefinitely.
+    """
     try:
-        t=yf.Ticker(sym+".NS")
-        if start: d=t.history(start=start,end=end,interval=interval,auto_adjust=False,prepost=False)
-        else: d=t.history(period=period,interval=interval,auto_adjust=False,prepost=False)
-        if d is None or d.empty: return pd.DataFrame()
-        if isinstance(d.columns,pd.MultiIndex): d.columns=d.columns.get_level_values(-1)
+        ticker=sym.strip().upper()+".NS"
+        kwargs=dict(
+            tickers=[ticker], interval=interval, auto_adjust=False,
+            prepost=False, group_by="ticker", threads=False,
+            progress=False, timeout=12,
+        )
+        if start:
+            kwargs["start"]=start; kwargs["end"]=end
+        else:
+            kwargs["period"]=period
+        raw=yf.download(**kwargs)
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        if isinstance(raw.columns,pd.MultiIndex):
+            levels=[set(str(x).upper() for x in raw.columns.get_level_values(i)) for i in range(raw.columns.nlevels)]
+            if ticker.upper() in levels[0]:
+                d=raw[ticker].copy()
+            elif ticker.upper() in levels[-1]:
+                d=raw.xs(ticker,axis=1,level=raw.columns.nlevels-1).copy()
+            else:
+                d=raw.copy()
+                d.columns=d.columns.get_level_values(-1)
+        else:
+            d=raw.copy()
         cols=["Open","High","Low","Close","Volume"]
         return d[cols].dropna() if all(x in d.columns for x in cols) else pd.DataFrame()
     except Exception as e:
@@ -225,7 +248,7 @@ def fetch_batch(symbols,interval,period):
     try:
         raw=yf.download(tickers=tickers,interval=interval,period=period,
                         auto_adjust=False,prepost=False,group_by="ticker",
-                        threads=True,progress=False,timeout=25)
+                        threads=True,progress=False,timeout=15)
     except Exception as e:
         log(f"batch download failed ({len(symbols)}): {e}")
         raw=None
@@ -742,11 +765,12 @@ class App(tk.Tk):
             symbols=get_index_symbols(universe)
             interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[tf]
             period={"15 min":"60d","1 hour":"730d","1 day":"1y"}[tf]
+            self.dash_status.config(text=f"● Connecting | {len(symbols)} stocks")
             regime=get_market_regime()
             results=[]
-            for i in range(0,len(symbols),75):
+            for i in range(0,len(symbols),50):
                 if not getattr(self,"dash_running",False): break
-                chunk=symbols[i:i+75]
+                chunk=symbols[i:i+50]
                 data_map=fetch_batch(chunk,interval,period)
                 daily_map=fetch_batch(chunk,"1d","60d")
                 for sym,d in data_map.items():
@@ -840,30 +864,42 @@ class App(tk.Tk):
             interval,period={"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}[self.tf.get()]
             universe=self.universe.get()
             symbols=get_index_symbols(universe)
+            total=len(symbols)
+            self.q.put(("scan_total",total))
+            self.q.put(("status",f"Loaded {total} stocks from {universe}. Connecting to market data..."))
+            # Fetch regime once, but do not let it block the visible scan progress.
             regime=get_market_regime()
-            self.q.put(("status",f"Loaded {len(symbols)} stocks from {universe}. Checking market data, liquidity and signals..."))
-            batch_size=100
-            batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
-            daily_map={}
-            with ThreadPoolExecutor(max_workers=8) as daily_pool:
-                daily_futures=[daily_pool.submit(fetch_batch,b,"1d","60d") for b in batches]
-                for fut in as_completed(daily_futures):
-                    daily_map.update(fut.result())
+            self.q.put(("status",f"Market data connected. Scanning {total} stocks..."))
+            # Smaller batches prevent one large Yahoo request from stalling the UI.
+            batch_size=50
+            batches=[symbols[i:i+batch_size] for i in range(0,total,batch_size)]
             rows=[]; completed=0; minimum=self.score.get()
-            self.q.put(('scan_total',len(symbols)))
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futures=[pool.submit(fetch_batch,b,interval,period) for b in batches]
+
+            def load_batch(batch):
+                data_map=fetch_batch(batch,interval,period)
+                daily_map=fetch_batch(batch,"1d","60d")
+                return data_map,daily_map
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures=[pool.submit(load_batch,b) for b in batches]
                 for fut in as_completed(futures):
                     if self.stop_flag: break
-                    data_map=fut.result()
+                    try:
+                        data_map,daily_map=fut.result()
+                    except Exception as e:
+                        log(f"scan batch failed: {e}")
+                        data_map,daily_map={},{}
                     for sym,d in data_map.items():
                         snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
                         if not snap: continue
                         rows.append((snap["score"],sym,snap["row"],snap["signal"].qualifies,snap["liquid"]))
                     completed+=len(data_map)
+                    # Advance even when Yahoo returns no data, so the user can
+                    # see that a batch finished rather than a frozen 0/N state.
+                    batch_done=min(total, completed)
                     confirmed=sum(1 for sc,_,_,q,l in rows if q and l and sc>=minimum)
                     candidates=sum(1 for sc,_,_,q,l in rows if l and sc>=max(0,minimum-10) and not (q and l and sc>=minimum))
-                    self.q.put(('scan_progress',completed,len(symbols),confirmed,candidates))
+                    self.q.put(('scan_progress',batch_done,total,confirmed,candidates))
             rows.sort(key=lambda z:(0 if z[3] and z[4] and z[0]>=minimum else 1, -z[0], z[1]))
             for _,_,row,_,_ in rows:
                 self.q.put(("row",row))
