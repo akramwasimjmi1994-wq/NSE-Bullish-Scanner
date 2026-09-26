@@ -904,15 +904,19 @@ class App(tk.Tk):
         if p: pd.DataFrame(self.trades).to_csv(p,index=False)
 
     def update(self):
+        self.status.config(text="● CHECKING FOR UPDATES...")
         threading.Thread(target=self.update_worker,daemon=True).start()
 
     def update_worker(self):
         try:
             info=check_update()
-            if not info: self.q.put(("msg","You already have the latest version.")); return
+            if not info:
+                self.q.put(("update_status",f"You already have the latest version (v{APP_VERSION})."))
+                return
             self.q.put(("update",info))
         except Exception as e:
-            log("update: "+traceback.format_exc()); self.q.put(("msg",f"Update check failed:\n{e}"))
+            log("update: "+traceback.format_exc())
+            self.q.put(("update_error",f"Update check failed:\n{e}"))
 
     def poll(self):
         try:
@@ -927,7 +931,15 @@ class App(tk.Tk):
                     self.scan_progress["maximum"]=max(1,total); self.scan_progress["value"]=done; self.progress_label.config(text=f"{done:,} / {total:,} stocks scanned")
                     self.scan_kpis["scanned"].set(f"{done:,}"); self.scan_kpis["bullish"].set(f"{confirmed+candidates:,}"); self.scan_kpis["confirmed"].set(f"{confirmed:,}"); self.scan_kpis["candidates"].set(f"{candidates:,}")
                     if self.scan_started: self.scan_kpis["duration"].set(str(datetime.now()-self.scan_started).split(".")[0])
-                elif typ=="msg": messagebox.showinfo("NSE Bullish Scanner",data)
+                elif typ=="msg":
+                    self.status.config(text="● READY")
+                    messagebox.showinfo("NSE Bullish Scanner",data)
+                elif typ=="update_status":
+                    self.status.config(text="● UP TO DATE")
+                    messagebox.showinfo("NSE Bullish Scanner",data)
+                elif typ=="update_error":
+                    self.status.config(text="● UPDATE CHECK FAILED")
+                    messagebox.showerror("NSE Bullish Scanner",data)
                 elif typ=="dashboard":
                     self.dashboard_render(data)
                 elif typ=="detail":
