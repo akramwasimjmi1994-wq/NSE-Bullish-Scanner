@@ -23,8 +23,20 @@ jobs:
         with:
           gradle-version: "8.7"
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
+        run: |
+          set +e
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          exit $code
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NSE-Bullish-Scanner-Android-build-log
+          path: android/build.log
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: NSE-Bullish-Scanner-Android
           path: android/app/build/outputs/apk/debug/app-debug.apk
