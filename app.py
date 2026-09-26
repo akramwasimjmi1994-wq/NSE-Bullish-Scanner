@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.8"
+APP_VERSION = "3.0.9"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -304,7 +304,7 @@ class App(tk.Tk):
         self.tree.bind("<Double-1>", lambda e:self.use_selected_stock())
 
         f=ttk.Frame(bt); f.pack(fill="x")
-        ttk.Label(f,text="Timeframe").grid(row=0,column=0); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=1,padx=5)
+        ttk.Label(f,text="Stock Universe").grid(row=0,column=0); self.btu=ttk.Combobox(f,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12); self.btu.set("Nifty 50"); self.btu.grid(row=0,column=1,padx=5); ttk.Label(f,text="Timeframe").grid(row=0,column=2); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=3,padx=5)
         ttk.Label(f,text="Start").grid(row=0,column=2); self.start=ttk.Entry(f,width=12); self.start.insert(0,(datetime.now()-timedelta(days=365)).strftime("%Y-%m-%d")); self.start.grid(row=0,column=3,padx=5)
         ttk.Label(f,text="End").grid(row=0,column=4); self.end=ttk.Entry(f,width=12); self.end.insert(0,datetime.now().strftime("%Y-%m-%d")); self.end.grid(row=0,column=5,padx=5)
         ttk.Label(f,text="Score").grid(row=1,column=0); self.bs=tk.IntVar(value=6); ttk.Spinbox(f,from_=1,to=7,textvariable=self.bs,width=5).grid(row=1,column=1)
@@ -433,26 +433,32 @@ class App(tk.Tk):
         self.trades=[]; threading.Thread(target=self.bt_worker,daemon=True).start()
 
     def bt_worker(self):
-        interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[self.btf.get()]
-        for i,s in enumerate(SYMBOLS,1):
-            self.q.put(("status",f"Backtesting {i}/{len(SYMBOLS)}: {s}"))
-            try:
-                d=calc(fetch(s,interval,start=self.start.get(),end=self.end.get()))
-                for i in range(60,len(d)-1):
-                    x=d.iloc[i]
-                    cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
-                    if sum(bool(v) for v in cond)<self.bs.get(): continue
-                    entry=float(d.Open.iloc[i+1]); target=entry*(1+self.target.get()/100); stop=entry*(1-self.stop.get()/100)
-                    last=min(len(d)-1,i+1+self.bars.get()); outcome="TIME"; exitp=float(d.Close.iloc[last]); exit_i=last
-                    for j in range(i+1,last+1):
-                        if float(d.Low.iloc[j])<=stop: exitp=stop; outcome="LOSS"; exit_i=j; break
-                        if float(d.High.iloc[j])>=target: exitp=target; outcome="WIN"; exit_i=j; break
-                    ret=(exitp/entry-1)*100
-                    self.trades.append({"Symbol":s,"SignalTime":str(d.index[i]),"Entry":entry,"Exit":exitp,"ReturnPct":ret,"Outcome":outcome,"Score":int(sum(bool(v) for v in cond)),"BarsHeld":exit_i-(i+1)})
-            except Exception as e:
-                log(f"backtest {s}: {e}")
-        self.q.put(("done",self.trades)); self.q.put(("status","Backtest complete"))
-
+        try:
+            interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[self.btf.get()]
+            universe=self.btu.get(); symbols=get_index_symbols(universe); total=len(symbols)
+            self.q.put(("status",f"Backtesting {total} stocks from {universe}..."))
+            for idx,sym in enumerate(symbols,1):
+                self.q.put(("status",f"Backtesting {idx}/{total}: {sym}"))
+                try:
+                    d=fetch(sym,interval,start=self.start.get(),end=self.end.get())
+                    if d.empty or len(d)<61: continue
+                    d=calc(d)
+                    for i in range(60,len(d)-1):
+                        x=d.iloc[i]
+                        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
+                        score=sum(bool(v) for v in cond)
+                        if score<self.bs.get(): continue
+                        entry=float(d.Open.iloc[i+1]); target=entry*(1+self.target.get()/100); stop=entry*(1-self.stop.get()/100)
+                        last=min(len(d)-1,i+1+self.bars.get()); outcome="TIME"; exitp=float(d.Close.iloc[last]); exit_i=last
+                        for j in range(i+1,last+1):
+                            if float(d.Low.iloc[j])<=stop: exitp=stop; outcome="LOSS"; exit_i=j; break
+                            if float(d.High.iloc[j])>=target: exitp=target; outcome="WIN"; exit_i=j; break
+                        ret=(exitp/entry-1)*100
+                        self.trades.append({"Symbol":sym,"SignalTime":str(d.index[i]),"Entry":entry,"Exit":exitp,"ReturnPct":ret,"Outcome":outcome,"Score":score,"BarsHeld":exit_i-(i+1)})
+                except Exception as e: log(f"backtest {sym}: {e}")
+            self.q.put(("done",self.trades)); self.q.put(("status",f"Backtest complete - {len(self.trades)} trades from {universe}."))
+        except Exception as e:
+            log("bt_worker: "+traceback.format_exc()); self.q.put(("msg",f"Backtest failed: {e}"))
     def export(self):
         if not self.trades: messagebox.showinfo("Backtest","Run a backtest first."); return
         p=filedialog.asksaveasfilename(defaultextension=".csv",filetypes=[("CSV","*.csv")])
