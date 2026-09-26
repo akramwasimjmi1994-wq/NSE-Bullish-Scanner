@@ -292,7 +292,7 @@ class App(tk.Tk):
         self.geometry("1500x900")
         self.minsize(1200,700)
         self.protocol("WM_DELETE_WINDOW",self.destroy)
-        self.q=queue.Queue(); self.stop_flag=False; self.trades=[]; self.dash_running=False
+        self.q=queue.Queue(); self.stop_flag=False; self.trades=[]; self.dash_running=False; self.scan_started=None
         self.setup_styles()
         self.make_ui(); self.after(200,self.poll)
         log("Application started.")
@@ -635,7 +635,10 @@ class App(tk.Tk):
 
     def scan(self):
         for x in self.tree.get_children(): self.tree.delete(x)
-        self.stop_flag=False; threading.Thread(target=self.scan_worker,daemon=True).start()
+        self.stop_flag=False; self.scan_started=datetime.now()
+        for v in self.scan_kpis.values(): v.set('0')
+        self.scan_kpis['duration'].set('—'); self.scan_progress['value']=0
+        threading.Thread(target=self.scan_worker,daemon=True).start()
 
     def scan_worker(self):
         try:
@@ -646,6 +649,7 @@ class App(tk.Tk):
             batch_size=100
             batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
             confirmed=[]; candidates=[]; completed=0; minimum=self.score.get()
+            self.q.put(('scan_total',len(symbols)))
             with ThreadPoolExecutor(max_workers=8) as pool:
                 futures=[pool.submit(fetch_batch,b,interval,period) for b in batches]
                 for fut in as_completed(futures):
@@ -660,7 +664,7 @@ class App(tk.Tk):
                         elif bullish and sc>=max(5,minimum-1):
                             candidates.append((sc,sym,row))
                     completed+=len(data_map)
-                    self.q.put(("status",f"Downloaded/analyzed {completed}/{len(symbols)} stocks..."))
+                    self.q.put(('scan_progress',completed,len(symbols),len(confirmed),len(candidates)))
             confirmed.sort(key=lambda z:(-z[0],z[1]))
             for _,_,row in confirmed: self.q.put(("row",row))
             if not confirmed:
@@ -730,7 +734,14 @@ class App(tk.Tk):
             while True:
                 typ,data=self.q.get_nowait()
                 if typ in ("row","candidate"): self.tree.insert("", "end", values=data)
-                elif typ=="status": self.status.config(text=data); self.summary.config(text=data)
+                elif typ=="status": self.status.config(text=data)
+                elif typ=="scan_total":
+                    self.scan_progress["maximum"]=max(1,data); self.scan_progress["value"]=0; self.progress_label.config(text=f"0 / {data} stocks scanned")
+                elif typ=="scan_progress":
+                    done,total,confirmed,candidates=data
+                    self.scan_progress["maximum"]=max(1,total); self.scan_progress["value"]=done; self.progress_label.config(text=f"{done:,} / {total:,} stocks scanned")
+                    self.scan_kpis["scanned"].set(f"{done:,}"); self.scan_kpis["bullish"].set(f"{confirmed+candidates:,}"); self.scan_kpis["confirmed"].set(f"{confirmed:,}"); self.scan_kpis["candidates"].set(f"{candidates:,}")
+                    if self.scan_started: self.scan_kpis["duration"].set(str(datetime.now()-self.scan_started).split(".")[0])
                 elif typ=="msg": messagebox.showinfo("NSE Bullish Scanner",data)
                 elif typ=="dashboard":
                     self.dashboard_render(data)
