@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.7"
+APP_VERSION = "3.0.8"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -226,8 +226,9 @@ def scan_one(sym,d):
 
 
 def trade_setup(sym, interval):
-    period = {"15 min":"60d","1 hour":"730d","1 day":"10y"}[interval]
-    d = fetch(sym.upper().strip(), interval, period=period)
+    settings = {"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}
+    yf_interval, period = settings[interval]
+    d = fetch(sym.upper().strip(), yf_interval, period=period)
     if d.empty or len(d) < 60:
         raise ValueError("Not enough market data available for this stock/timeframe.")
     d = calc(d)
@@ -237,7 +238,7 @@ def trade_setup(sym, interval):
     score = sum(bool(v) for v in [
         x.Close>x.EMA20 and x.EMA20>x.EMA50,
         x.Close>x.VWAP, x.RSI14>50, x.ADX14>=20,
-        x.RelVol>=1.2, x.STDir==1
+        x.RelVol>=1.2, x.STDir==1, x.MACD>x.MACDSignal
     ])
     entry = close
     stop = max(0.01, entry - 1.5*atrv)
@@ -252,6 +253,7 @@ def trade_setup(sym, interval):
         "rsi": float(x.RSI14), "adx": float(x.ADX14),
         "relvol": float(x.RelVol), "ema20": float(x.EMA20),
         "ema50": float(x.EMA50), "vwap": float(x.VWAP),
+        "macd": float(x.MACD), "macd_signal": float(x.MACDSignal),
         "supertrend": "BULLISH" if x.STDir==1 else "BEARISH",
         "breakout": breakout, "time": str(d.index[-1])
     }
@@ -337,7 +339,7 @@ class App(tk.Tk):
             ("Risk : Reward","setup_rr"),("ATR(14)","setup_atr"),
             ("20-Bar Breakout","setup_breakout"),("Scanner Score","setup_score"),
             ("RSI","setup_rsi"),("ADX","setup_adx"),("Rel Volume","setup_relvol"),
-            ("Supertrend","setup_st")
+            ("Supertrend","setup_st"),("MACD","setup_macd")
         ]
         self.setup_vars={}
         for i,(lab,key) in enumerate(labels):
@@ -484,7 +486,7 @@ class App(tk.Tk):
                         "setup_rr":f"1 : {r['rr']:.2f}","setup_atr":f"{r['atr']:.2f}",
                         "setup_breakout":f"{r['breakout']:.2f}","setup_score":f"{r['score']}/6",
                         "setup_rsi":f"{r['rsi']:.1f}","setup_adx":f"{r['adx']:.1f}",
-                        "setup_relvol":f"{r['relvol']:.2f}","setup_st":r["supertrend"]
+                        "setup_relvol":f"{r['relvol']:.2f}","setup_st":r["supertrend"],"setup_macd":f"{r['macd']:.3f}"
                     }
                     for k,v in vals.items(): self.setup_vars[k].set(v)
                 elif typ=="done":
