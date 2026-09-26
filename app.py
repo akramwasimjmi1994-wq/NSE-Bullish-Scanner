@@ -244,20 +244,25 @@ def fetch_batch(symbols,interval,period):
         except Exception as e: log(f"extract {sym}: {e}")
     return out
 
-def scan_one(sym,d):
+def scan_one(sym,d,regime,daily_d=None):
     if d is None or len(d)<60: return None
     try:
+        if daily_d is None or daily_d.empty: return None
+        avg_volume,avg_value=liquidity_metrics(daily_d)
+        if not passes_liquidity_filter(avg_volume,avg_value): return None
         d=calc(d); x=d.iloc[-1]
-        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,
-              x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
-        sc=sum(bool(v) for v in cond)
-        names=["EMA","VWAP","RSI","ADX","RelVol","Supertrend","MACD"]
-        row=(sym,f"{x.Close:.2f}",sc,f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
+        signal=evaluate_signal(
+            price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
+            vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
+            relative_volume=float(x.RelVol), supertrend_bullish=bool(x.STDir==1),
+            macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
+        )
+        sc=signal.composite_score
+        row=(sym,f"{x.Close:.2f}",f"{sc}/100",f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
              f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}",
              "BULLISH" if x.STDir==1 else "BEARISH",f"{x.MACD:.3f}",
-             "BUY" if sc>=6 and x.STDir==1 else "WATCH",
-             ", ".join(n for n,v in zip(names,cond) if v))
-        return sc,bool(x.STDir==1),row
+             "BUY" if signal.qualifies else "WATCH")
+        return signal,row
     except Exception as e:
         log(f"scan {sym}: {e}"); return None
 
@@ -273,11 +278,14 @@ def trade_setup(sym, interval):
     x = d.iloc[-1]
     close = float(x.Close)
     atrv = float(atr(d,14).iloc[-1])
-    score = sum(bool(v) for v in [
-        x.Close>x.EMA20 and x.EMA20>x.EMA50,
-        x.Close>x.VWAP, x.RSI14>50, x.ADX14>=20,
-        x.RelVol>=1.2, x.STDir==1, x.MACD>x.MACDSignal
-    ])
+    regime=get_market_regime()
+    signal=evaluate_signal(
+        price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
+        vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
+        relative_volume=float(x.RelVol), supertrend_bullish=bool(x.STDir==1),
+        macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
+    )
+    score=signal.composite_score
     entry = close
     stop = max(0.01, entry - 1.5*atrv)
     target = entry + 3.0*atrv
@@ -303,9 +311,15 @@ def dashboard_snapshot(sym, interval):
     d = fetch(sym, yf_interval, period=period)
     if d.empty or len(d) < 60: return None
     d = calc(d); x = d.iloc[-1]
-    cond = [x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,
-            x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
-    score = int(sum(bool(v) for v in cond)); bullish = bool(x.STDir == 1)
+    regime=get_market_regime()
+    signal=evaluate_signal(
+        price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
+        vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
+        relative_volume=float(x.RelVol), supertrend_bullish=bool(x.STDir==1),
+        macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
+    )
+    score=signal.composite_score
+    bullish=signal.qualifies
     entry=float(x.Close); atrv=float(atr(d,14).iloc[-1])
     return {"symbol":sym,"price":entry,"score":score,
             "signal":"BUY" if score>=6 and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),
