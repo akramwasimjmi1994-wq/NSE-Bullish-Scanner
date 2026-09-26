@@ -359,6 +359,7 @@ class App(tk.Tk):
         style.configure("TButton",background="#1e222d",foreground="#d1d4dc",padding=(12,8),borderwidth=0)
         style.map("TButton",background=[("active","#2a2e39")])
         style.configure("Nav.TButton",background="#131722",foreground="#787b86",padding=(16,10),font=("Segoe UI Semibold",10),borderwidth=0)
+        style.configure("Nav.Active.TButton",background="#1e222d",foreground="#26a69a",padding=(16,10),font=("Segoe UI Semibold",10),borderwidth=0)
         style.map("Nav.TButton",background=[("active","#1e222d")],foreground=[("active","#f5f7fa")])
         style.configure("Accent.TButton",background="#26a69a",foreground="#ffffff",padding=(14,9),font=("Segoe UI Semibold",10),borderwidth=0)
         style.map("Accent.TButton",background=[("active","#2bbbad")])
@@ -498,9 +499,9 @@ class App(tk.Tk):
         ttk.Button(f,text="Export CSV",command=self.export).grid(row=0,column=9,rowspan=2)
         self.summary=ttk.Label(frame,text="No backtest run yet.",font=("Segoe UI",11,"bold")); self.summary.pack(fill="x",pady=8)
         cols2=["Symbol","SignalTime","Entry","Exit","Return %","Outcome","Score","Bars"]
-        self.frame=ttk.Treeview(frame,columns=cols2,show="headings")
-        for x in cols2: self.frame.heading(x,text=x); self.frame.column(x,width=135,anchor="center")
-        self.frame.pack(fill="both",expand=True)
+        self.bt_tree=ttk.Treeview(frame,columns=cols2,show="headings")
+        for x in cols2: self.bt_tree.heading(x,text=x); self.bt_tree.column(x,width=135,anchor="center")
+        self.bt_tree.pack(fill="both",expand=True)
 
 
     def build_setup_page(self,frame):
@@ -853,7 +854,7 @@ class App(tk.Tk):
             self.q.put(("msg",f"Scan failed:\n{e}"))
 
     def backtest(self):
-        for x in self.bt.get_children(): self.bt.delete(x)
+        for x in self.bt_tree.get_children(): self.bt_tree.delete(x)
         self.trades=[]; threading.Thread(target=self.bt_worker,daemon=True).start()
 
     def bt_worker(self):
@@ -954,7 +955,7 @@ class App(tk.Tk):
                         df=pd.DataFrame(data); wins=(df.ReturnPct>0).sum(); gp=df.loc[df.ReturnPct>0,"ReturnPct"].sum(); gl=abs(df.loc[df.ReturnPct<0,"ReturnPct"].sum())
                         self.summary.config(text=f"Trades: {len(df)} | Wins: {wins} | Win rate: {wins/len(df)*100:.2f}% | Avg return: {df.ReturnPct.mean():.2f}% | Profit factor: {(gp/gl if gl else float('inf')):.2f}")
                     else: self.summary.config(text="No signals found.")
-                    for r in data: self.bt.insert("", "end", values=(r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',f'{r["Exit"]:.2f}',f'{r["ReturnPct"]:.2f}%',r["Outcome"],r["CompositeScore"],r["BarsHeld"]))
+                    for r in data: self.bt_tree.insert("", "end", values=(r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',f'{r["Exit"]:.2f}',f'{r["ReturnPct"]:.2f}%',r["Outcome"],r["CompositeScore"],r["BarsHeld"]))
                 elif typ=="update":
                     info=data
                     if messagebox.askyesno("Update available",f"Version {info['version']} is available.\n\n{info.get('notes','')}\n\nUpdate now?"):
