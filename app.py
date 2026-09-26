@@ -488,7 +488,7 @@ class App(tk.Tk):
         ttk.Label(f,text="Stock Universe").grid(row=0,column=0); self.btu=ttk.Combobox(f,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12); self.btu.set("Nifty 50"); self.btu.grid(row=0,column=1,padx=5); ttk.Label(f,text="Timeframe").grid(row=0,column=2); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=3,padx=5)
         ttk.Label(f,text="Start").grid(row=0,column=4); self.start=ttk.Entry(f,width=12); self.start.insert(0,(datetime.now()-timedelta(days=365)).strftime("%Y-%m-%d")); self.start.grid(row=0,column=5,padx=5)
         ttk.Label(f,text="End").grid(row=0,column=6); self.end=ttk.Entry(f,width=12); self.end.insert(0,datetime.now().strftime("%Y-%m-%d")); self.end.grid(row=0,column=7,padx=5)
-        ttk.Label(f,text="Score").grid(row=1,column=0); self.bs=tk.IntVar(value=6); ttk.Spinbox(f,from_=1,to=7,textvariable=self.bs,width=5).grid(row=1,column=1)
+        ttk.Label(f,text="Score").grid(row=1,column=0); self.bs=tk.IntVar(value=70); ttk.Spinbox(f,from_=0,to=100,textvariable=self.bs,width=5).grid(row=1,column=1)
         ttk.Label(f,text="Target %").grid(row=1,column=2); self.target=tk.DoubleVar(value=2); ttk.Entry(f,textvariable=self.target,width=8).grid(row=1,column=3)
         ttk.Label(f,text="Stop %").grid(row=1,column=4); self.stop=tk.DoubleVar(value=1); ttk.Entry(f,textvariable=self.stop,width=8).grid(row=1,column=5)
         ttk.Label(f,text="Max bars").grid(row=1,column=6); self.bars=tk.IntVar(value=10); ttk.Entry(f,textvariable=self.bars,width=8).grid(row=1,column=7)
@@ -604,6 +604,7 @@ class App(tk.Tk):
             interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[tf]
             period={"15 min":"60d","1 hour":"730d","1 day":"1y"}[tf]
             results=[]
+            regime=get_market_regime()
             for i in range(0,len(symbols),75):
                 if not getattr(self,"dash_running",False): break
                 batch=symbols[i:i+75]
@@ -611,7 +612,7 @@ class App(tk.Tk):
                 daily_map=fetch_batch(batch,"1d","60d")
                 for sym,d in data_map.items():
                     try:
-                        snap=build_signal_snapshot(sym,d,get_market_regime(),daily_map.get(sym))
+                        snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
                         if not snap: continue
                         x=snap["latest"]; cd=snap["data"]; score=snap["score"]; liquid=snap["liquid"]
                         price=float(x.Close); atrv=float(atr(cd,14).iloc[-1])
