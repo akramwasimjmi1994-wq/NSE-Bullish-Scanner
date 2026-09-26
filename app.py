@@ -395,13 +395,13 @@ class App(tk.Tk):
         self.tf=ttk.Combobox(controls,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.tf.set("15 min"); self.tf.pack(side="left",padx=7)
         tk.Label(controls,text="UNIVERSE",bg="#0d1117",fg="#787b86",font=("Segoe UI",9,"bold")).pack(side="left",padx=(16,5))
         self.universe=ttk.Combobox(controls,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12); self.universe.set("All NSE"); self.universe.pack(side="left",padx=5)
-        tk.Label(controls,text="MIN SCORE",bg="#0d1117",fg="#787b86",font=("Segoe UI",9,"bold")).pack(side="left",padx=(16,5))
-        self.score=tk.IntVar(value=6); ttk.Spinbox(controls,from_=1,to=7,textvariable=self.score,width=5).pack(side="left")
+        tk.Label(controls,text="MIN SCORE / 100",bg="#0d1117",fg="#787b86",font=("Segoe UI",9,"bold")).pack(side="left",padx=(16,5))
+        self.score=tk.IntVar(value=70); ttk.Spinbox(controls,from_=50,to=100,increment=5,textvariable=self.score,width=5).pack(side="left")
         ttk.Button(controls,text="REFRESH LIST",command=self.refresh_universe).pack(side="left",padx=7)
         ttk.Button(controls,text="⚡ SCAN MARKET",command=self.scan,style="Accent.TButton").pack(side="left",padx=7)
 
         cards=tk.Frame(scan,bg="#0d1117"); cards.pack(fill="x",pady=(0,10)); self.scan_kpis={}
-        for title,key in [("STOCKS SCANNED","scanned"),("BULLISH SIGNALS","bullish"),("7/7 CONFIRMED","confirmed"),("NEAR-CONFIRMATION","candidates"),("SCAN DURATION","duration")]:
+        for title,key in [("STOCKS SCANNED","scanned"),("BULLISH SIGNALS","bullish"),("QUALIFIED","confirmed"),("NEAR-CONFIRMATION","candidates"),("SCAN DURATION","duration")]:
             card=tk.Frame(cards,bg="#1e222d",highlightbackground="#2a2e39",highlightthickness=1); card.pack(side="left",fill="both",expand=True,padx=4,ipady=7)
             tk.Label(card,text=title,bg="#1e222d",fg="#787b86",font=("Segoe UI",9,"bold")).pack(anchor="w",padx=14,pady=(7,0))
             v=tk.StringVar(value="0"); self.scan_kpis[key]=v
@@ -414,17 +414,17 @@ class App(tk.Tk):
         body=tk.Frame(scan,bg="#0d1117"); body.pack(fill="both",expand=True)
         left=tk.Frame(body,bg="#131722",highlightbackground="#2a2e39",highlightthickness=1); left.pack(side="left",fill="both",expand=True)
         right=tk.Frame(body,bg="#1e222d",width=370,highlightbackground="#2a2e39",highlightthickness=1); right.pack(side="right",fill="y",padx=(10,0)); right.pack_propagate(False)
-        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Trend","MACD","Signal"]
+        cols=["Symbol","Price","Composite","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Trend","MACD","Signal"]
         self.tree=ttk.Treeview(left,columns=cols,show="headings")
         for x in cols: self.tree.heading(x,text=x.upper()); self.tree.column(x,width=88,anchor="center")
-        self.tree.column("Symbol",width=105); self.tree.column("Score",width=72); self.tree.column("Signal",width=88)
+        self.tree.column("Symbol",width=105); self.tree.column("Composite",width=90); self.tree.column("Signal",width=88)
         self.tree.pack(fill="both",expand=True,padx=1,pady=1); self.tree.bind("<<TreeviewSelect>>",self.on_stock_select)
 
         tk.Label(right,text="STOCK DETAILS",bg="#1e222d",fg="#f5f7fa",font=("Segoe UI",13,"bold")).pack(anchor="w",padx=18,pady=(18,2))
         self.detail_symbol=tk.StringVar(value="Select a stock"); tk.Label(right,textvariable=self.detail_symbol,bg="#1e222d",fg="#26a69a",font=("Segoe UI",20,"bold")).pack(anchor="w",padx=18)
         self.detail_signal=tk.StringVar(value="—"); tk.Label(right,textvariable=self.detail_signal,bg="#1e222d",fg="#f5f7fa",font=("Segoe UI",10,"bold")).pack(anchor="w",padx=18,pady=(2,12))
         self.detail_vars={}
-        for lab,key in [("PRICE","price"),("SCORE","score"),("RSI 14","rsi"),("ADX 14","adx"),("RELATIVE VOLUME","relvol"),("EMA 20","ema20"),("EMA 50","ema50"),("VWAP","vwap"),("SUPERTREND","st"),("MACD","macd"),("MACD SIGNAL","macdsig")]:
+        for lab,key in [("PRICE","price"),("COMPOSITE","score"),("RSI 14","rsi"),("ADX 14","adx"),("RELATIVE VOLUME","relvol"),("EMA 20","ema20"),("EMA 50","ema50"),("VWAP","vwap"),("SUPERTREND","st"),("MACD","macd"),("MACD SIGNAL","macdsig")]:
             row=tk.Frame(right,bg="#1e222d"); row.pack(fill="x",padx=18,pady=3)
             tk.Label(row,text=lab,bg="#1e222d",fg="#787b86",font=("Segoe UI",9)).pack(side="left")
             v=tk.StringVar(value="—"); self.detail_vars[key]=v
@@ -439,7 +439,7 @@ class App(tk.Tk):
         vals=self.tree.item(sel[0],"values")
         if not vals: return
         self.detail_symbol.set(str(vals[0]))
-        self.detail_signal.set(f"Signal: {vals[11]}  |  Score: {vals[2]}/7")
+        self.detail_signal.set(f"Signal: {vals[11]}  |  Composite: {vals[2]}")
         for key,val in zip(["price","score","rsi","adx","relvol","ema20","ema50","vwap","st","macd"],vals[:10]):
             self.detail_vars[key].set(str(val))
         self.detail_vars["macdsig"].set("Loading...")
@@ -695,9 +695,15 @@ class App(tk.Tk):
             interval,period={"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}[self.tf.get()]
             universe=self.universe.get()
             symbols=get_index_symbols(universe)
-            self.q.put(("status",f"Loaded {len(symbols)} stocks from {universe}. Downloading market data in parallel..."))
+            regime=get_market_regime()
+            self.q.put(("status",f"Loaded {len(symbols)} stocks from {universe}. Checking liquidity and market regime..."))
             batch_size=100
             batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
+            daily_map={}
+            with ThreadPoolExecutor(max_workers=8) as daily_pool:
+                daily_futures=[daily_pool.submit(fetch_batch,b,"1d","60d") for b in batches]
+                for fut in as_completed(daily_futures):
+                    daily_map.update(fut.result())
             confirmed=[]; candidates=[]; completed=0; minimum=self.score.get()
             self.q.put(('scan_total',len(symbols)))
             with ThreadPoolExecutor(max_workers=8) as pool:
@@ -706,12 +712,13 @@ class App(tk.Tk):
                     if self.stop_flag: break
                     data_map=fut.result()
                     for sym,d in data_map.items():
-                        result=scan_one(sym,d)
+                        result=scan_one(sym,d,regime,daily_map.get(sym))
                         if not result: continue
-                        sc,bullish,row=result
-                        if sc>=minimum:
+                        signal,row=result
+                        sc=signal.composite_score
+                        if signal.qualifies and sc>=minimum:
                             confirmed.append((sc,sym,row))
-                        elif bullish and sc>=max(5,minimum-1):
+                        elif sc>=max(0,minimum-10):
                             candidates.append((sc,sym,row))
                     completed+=len(data_map)
                     self.q.put(('scan_progress',completed,len(symbols),len(confirmed),len(candidates)))
@@ -720,10 +727,10 @@ class App(tk.Tk):
             if not confirmed:
                 candidates.sort(key=lambda z:(-z[0],z[1]))
                 for _,_,row in candidates[:15]:
-                    row=list(row); row[9]="CANDIDATE"; row[11]="WATCH"; row[12]="Near confirmation: "+row[12]
+                    row=list(row); row[9]="CANDIDATE"; row[11]="WATCH"
                     self.q.put(("candidate",tuple(row)))
                 if candidates:
-                    self.q.put(("status",f"No {minimum}/7 fully confirmed signals. Showing top {min(15,len(candidates))} bullish candidates from {universe}."))
+                    self.q.put(("status",f"No signals met the {minimum}/100 threshold. Showing top {min(15,len(candidates))} candidates from {universe}."))
                 else:
                     self.q.put(("status","Scan complete — no bullish candidates met the fallback threshold."))
             else:
