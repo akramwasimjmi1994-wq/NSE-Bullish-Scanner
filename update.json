@@ -1,6 +1,6 @@
 {
-  "version": "3.0.4",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.4/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.0.5",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.5/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Fixed build: full current NSE equity universe, batched parallel market-data downloads, and bullish candidate suggestions when no fully confirmed signals are found."
+  "notes": "Added Trade Setup: single-stock entry, ATR-based stop loss, target, risk/reward, scanner score and technical levels."
 }
