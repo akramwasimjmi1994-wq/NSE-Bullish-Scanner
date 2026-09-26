@@ -1,6 +1,6 @@
 {
-  "version": "3.0.8",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.8/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.0.9",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.9/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Fixed Trade Setup market-data interval mapping and included MACD in the setup score."
+  "notes": "Fixed Backtest results and added All NSE, Nifty 50, Nifty 100 and Nifty 200 stock-universe selection."
 }
