@@ -834,8 +834,8 @@ class App(tk.Tk):
                         if not snap: continue
                         rows.append((snap["score"],sym,snap["row"],snap["signal"].qualifies,snap["liquid"]))
                     completed+=len(data_map)
-                    confirmed=sum(1 for _,_,_,q,l in rows if q and l and _ is not None)
-                    candidates=sum(1 for sc,_,_,q,l in rows if l and sc>=max(0,minimum-10) and not (q and l))
+                    confirmed=sum(1 for sc,_,_,q,l in rows if q and l and sc>=minimum)
+                    candidates=sum(1 for sc,_,_,q,l in rows if l and sc>=max(0,minimum-10) and not (q and l and sc>=minimum))
                     self.q.put(('scan_progress',completed,len(symbols),confirmed,candidates))
             rows.sort(key=lambda z:(0 if z[3] and z[4] and z[0]>=minimum else 1, -z[0], z[1]))
             for _,_,row,_,_ in rows:
