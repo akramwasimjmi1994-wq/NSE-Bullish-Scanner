@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.4.0"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -32,6 +32,7 @@ try:
     import numpy as np
     import pandas as pd
     import yfinance as yf
+    from signal_engine_v2 import MarketRegime, evaluate_signal, get_market_regime, passes_liquidity_filter
 except Exception as e:
     fatal(e)
     raise
@@ -169,6 +170,41 @@ def calc(df):
     d["MACD"]=ema(d.Close,12)-ema(d.Close,26)
     d["MACDSignal"]=ema(d["MACD"],9)
     return d
+
+def liquidity_metrics(d):
+    if d is None or d.empty:
+        return 0.0, 0.0
+    recent=d.tail(20).copy()
+    return float(recent["Volume"].mean()), float((recent["Close"]*recent["Volume"]).mean())
+
+def historical_market_regime(index_df, timestamp):
+    if index_df is None or index_df.empty:
+        return MarketRegime(True,0,0,"Index data unavailable — regime filter skipped")
+    ts=pd.Timestamp(timestamp)
+    if getattr(ts,"tzinfo",None) is not None:
+        ts=ts.tz_localize(None)
+    idx=index_df
+    if getattr(idx.index,"tz",None) is not None:
+        idx=idx.copy()
+        idx.index=idx.index.tz_localize(None)
+    prior=idx.loc[idx.index<=ts]
+    if len(prior)<55:
+        return MarketRegime(True,0,0,"Insufficient historical NIFTY data — regime filter skipped")
+    x=prior.iloc[-1]
+    price=float(x["Close"]); ema50=float(x["EMA50"])
+    return MarketRegime(price>ema50,price,ema50,"NIFTY above 50-EMA" if price>ema50 else "NIFTY below 50-EMA")
+
+def fetch_historical_market_regime(start,end):
+    try:
+        data=yf.Ticker("^NSEI").history(start=start,end=end,interval="1d",auto_adjust=False,prepost=False)
+        if data is None or data.empty:
+            return pd.DataFrame()
+        data=data.copy()
+        data["EMA50"]=data["Close"].ewm(span=50,adjust=False).mean()
+        return data[["Close","EMA50"]].dropna()
+    except Exception as e:
+        log(f"historical regime fetch failed: {e}")
+        return pd.DataFrame()
 
 def fetch(sym,interval,period=None,start=None,end=None):
     try:
