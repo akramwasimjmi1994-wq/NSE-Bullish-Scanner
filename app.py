@@ -814,7 +814,7 @@ class App(tk.Tk):
             universe=self.universe.get()
             symbols=get_index_symbols(universe)
             regime=get_market_regime()
-            self.q.put(("status",f"Loaded {len(symbols)} stocks from {universe}. Checking liquidity and market regime..."))
+            self.q.put(("status",f"Loaded {len(symbols)} stocks from {universe}. Checking market data, liquidity and signals..."))
             batch_size=100
             batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
             daily_map={}
@@ -822,7 +822,7 @@ class App(tk.Tk):
                 daily_futures=[daily_pool.submit(fetch_batch,b,"1d","60d") for b in batches]
                 for fut in as_completed(daily_futures):
                     daily_map.update(fut.result())
-            confirmed=[]; candidates=[]; completed=0; minimum=self.score.get()
+            rows=[]; completed=0; minimum=self.score.get()
             self.q.put(('scan_total',len(symbols)))
             with ThreadPoolExecutor(max_workers=8) as pool:
                 futures=[pool.submit(fetch_batch,b,interval,period) for b in batches]
@@ -830,29 +830,22 @@ class App(tk.Tk):
                     if self.stop_flag: break
                     data_map=fut.result()
                     for sym,d in data_map.items():
-                        result=scan_one(sym,d,regime,daily_map.get(sym))
-                        if not result: continue
-                        signal,row=result
-                        sc=signal.composite_score
-                        if signal.qualifies and sc>=minimum:
-                            confirmed.append((sc,sym,row))
-                        elif sc>=max(0,minimum-10):
-                            candidates.append((sc,sym,row))
+                        snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
+                        if not snap: continue
+                        rows.append((snap["score"],sym,snap["row"],snap["signal"].qualifies,snap["liquid"]))
                     completed+=len(data_map)
-                    self.q.put(('scan_progress',completed,len(symbols),len(confirmed),len(candidates)))
-            confirmed.sort(key=lambda z:(-z[0],z[1]))
-            for _,_,row in confirmed: self.q.put(("row",row))
-            if not confirmed:
-                candidates.sort(key=lambda z:(-z[0],z[1]))
-                for _,_,row in candidates[:15]:
-                    row=list(row); row[9]="CANDIDATE"; row[11]="WATCH"
-                    self.q.put(("candidate",tuple(row)))
-                if candidates:
-                    self.q.put(("status",f"No signals met the {minimum}/100 threshold. Showing top {min(15,len(candidates))} candidates from {universe}."))
-                else:
-                    self.q.put(("status","Scan complete — no bullish candidates met the fallback threshold."))
+                    confirmed=sum(1 for _,_,_,q,l in rows if q and l and _ is not None)
+                    candidates=sum(1 for sc,_,_,q,l in rows if l and sc>=max(0,minimum-10) and not (q and l))
+                    self.q.put(('scan_progress',completed,len(symbols),confirmed,candidates))
+            rows.sort(key=lambda z:(0 if z[3] and z[4] and z[0]>=minimum else 1, -z[0], z[1]))
+            for _,_,row,_,_ in rows:
+                self.q.put(("row",row))
+            buys=sum(1 for sc,_,_,q,l in rows if q and l and sc>=minimum)
+            liquid_count=sum(1 for _,_,_,_,l in rows if l)
+            if rows:
+                self.q.put(("status",f"Scan complete — {len(rows)} stocks with valid data | {buys} BUY candidates | {liquid_count} passed liquidity filter."))
             else:
-                self.q.put(("status",f"Scan complete — {len(confirmed)} fully confirmed bullish signals across {len(symbols)} stocks from {universe}."))
+                self.q.put(("status","Scan complete — no stock returned usable market data."))
         except Exception as e:
             log("scan_worker: "+traceback.format_exc())
             self.q.put(("msg",f"Scan failed:\n{e}"))
