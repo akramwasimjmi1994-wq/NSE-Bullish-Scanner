@@ -1,11 +1,12 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import threading, queue, os, sys, json, traceback, subprocess, tempfile, urllib.request, hashlib
+import threading, queue, os, sys, json, traceback, subprocess, tempfile, urllib.request, hashlib, io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.4"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -35,25 +36,51 @@ except Exception as e:
     fatal(e)
     raise
 
-# Representative built-in NSE universe. Add more symbols as required.
-SYMBOLS = """360ONE 3MINDIA ABB ACC ADANIENT ADANIGREEN ADANIPORTS ADANIPOWER ABCAPITAL ABFRL
-ALKEM AMBER AMBUJACEM ANGELONE APARINDS APLAPOLLO APOLLOHOSP APOLLOTYRE ASIANPAINT ASTRAL
-ATGL AUBANK AUROPHARMA AXISBANK BAJAJ-AUTO BAJAJFINSV BAJFINANCE BALKRISIND BANDHANBNK
-BANKBARODA BANKINDIA BEL BEML BHARATFORG BHARTIARTL BHEL BIOCON BIRLACORPN BOSCHLTD BPCL
-BRITANNIA BSE CANBK CANFINHOME CDSL CEATLTD CGPOWER CHOLAFIN CIPLA COALINDIA COFORGE
-COLPAL CONCOR COROMANDEL CROMPTON CUB CUMMINSIND DABUR DALBHARAT DEEPAKNTR DELHIVERY
-DIVISLAB DIXON DLF DMART DRREDDY EICHERMOT EXIDEIND FEDERALBNK GAIL GLENMARK GODREJCP
-GODREJPROP GRASIM HAL HAVELLS HCLTECH HDFCAMC HDFCBANK HDFCLIFE HEROMOTOCO HINDALCO
-HINDCOPPER HINDPETRO HINDUNILVR HINDZINC ICICIBANK ICICIGI ICICIPRULI IDEA IDFCFIRSTB
-IEX IGL INDIAMART INDIANB INDHOTEL INDIGO INDUSINDBK INDUSTOWER INFY IOC IRCON IREDA
-IRFC ITC JINDALSTEL JIOFIN JSWENERGY JSWSTEEL JUBLFOOD KALYANKJIL KEI KFINTECH KOTAKBANK
-KPITTECH LICHSGFIN LICI LT LTIM LUPIN M&M M&MFIN MANAPPURAM MARICO MARUTI MAXHEALTH
-MAZDOCK MGL MOTHERSON MPHASIS MRF MUTHOOTFIN NATIONALUM NBCC NCC NESTLEIND NHPC NMDC
-NTPC OBEROIRLTY OFSS OIL ONGC PAGEIND PAYTM PERSISTENT PFC PNB POLYCAB POWERGRID PVRINOX
-RECLTD RELIANCE RVNL SAIL SBICARD SBILIFE SBIN SHREECEM SIEMENS SJVN SOLARINDS SONACOMS
-SRF SUNPHARMA SUNTV SUPREMEIND SUZLON TATACHEM TATACOMM TATAELXSI TATAMOTORS TATAPOWER
-TATASTEEL TCS TECHM TITAN TORNTPHARM TORNTPOWER TRENT TVSMOTOR UPL VBL VEDL VOLTAS WIPRO
-YESBANK ZEEL ZOMATO ZYDUSLIFE""".split()
+# Current NSE equity universe, refreshed daily and cached locally.
+NSE_SYMBOL_CACHE = DATA_DIR / "nse_symbols.json"
+
+def _download_nse(url, timeout=25):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/149 Safari/537.36",
+        "Accept": "text/csv,application/json,text/plain,*/*",
+        "Referer": "https://www.nseindia.com/",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+def get_nse_symbols(force=False):
+    if not force and NSE_SYMBOL_CACHE.exists():
+        try:
+            obj=json.loads(NSE_SYMBOL_CACHE.read_text(encoding="utf-8"))
+            if datetime.now().timestamp()-float(obj.get("timestamp",0)) < 86400 and len(obj.get("symbols",[])) >= 500:
+                return list(obj["symbols"])
+        except Exception:
+            pass
+    last_err=None
+    for url in ("https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+                "https://www.nseindia.com/api/equity-master"):
+        try:
+            raw=_download_nse(url)
+            df=pd.read_csv(io.StringIO(raw.decode("utf-8-sig",errors="replace")))
+            cols={str(x).strip().upper():x for x in df.columns}
+            sym_col=cols.get("SYMBOL")
+            series_col=cols.get("SERIES")
+            if not sym_col: raise ValueError("NSE equity list has no SYMBOL column")
+            if series_col:
+                df=df[df[series_col].astype(str).str.upper().isin({"EQ","BE","BZ"})]
+            syms=sorted({str(x).strip().upper() for x in df[sym_col].dropna() if str(x).strip()})
+            if len(syms)<500: raise ValueError(f"NSE returned only {len(syms)} symbols")
+            NSE_SYMBOL_CACHE.write_text(json.dumps({"timestamp":datetime.now().timestamp(),"symbols":syms}),encoding="utf-8")
+            return syms
+        except Exception as e:
+            last_err=e
+            log(f"NSE list failed: {e}")
+    if NSE_SYMBOL_CACHE.exists():
+        try:
+            obj=json.loads(NSE_SYMBOL_CACHE.read_text(encoding="utf-8"))
+            if len(obj.get("symbols",[]))>=500: return list(obj["symbols"])
+        except Exception: pass
+    raise RuntimeError(f"Could not load NSE equity universe: {last_err}")
 
 def ema(s,n): return s.ewm(span=n,adjust=False).mean()
 def rma(s,n): return s.ewm(alpha=1/n,adjust=False).mean()
@@ -114,12 +141,58 @@ def calc(df):
     return d
 
 def fetch(sym,interval,period=None,start=None,end=None):
-    t=yf.Ticker(sym+".NS")
-    if start: d=t.history(start=start,end=end,interval=interval,auto_adjust=False,prepost=False)
-    else: d=t.history(period=period,interval=interval,auto_adjust=False,prepost=False)
-    if d is None or d.empty: return pd.DataFrame()
-    if isinstance(d.columns,pd.MultiIndex): d.columns=d.columns.get_level_values(0)
-    return d[["Open","High","Low","Close","Volume"]].dropna()
+    try:
+        t=yf.Ticker(sym+".NS")
+        if start: d=t.history(start=start,end=end,interval=interval,auto_adjust=False,prepost=False)
+        else: d=t.history(period=period,interval=interval,auto_adjust=False,prepost=False)
+        if d is None or d.empty: return pd.DataFrame()
+        if isinstance(d.columns,pd.MultiIndex): d.columns=d.columns.get_level_values(-1)
+        cols=["Open","High","Low","Close","Volume"]
+        return d[cols].dropna() if all(x in d.columns for x in cols) else pd.DataFrame()
+    except Exception as e:
+        log(f"fetch {sym}: {e}"); return pd.DataFrame()
+
+def fetch_batch(symbols,interval,period):
+    if not symbols: return {}
+    try:
+        raw=yf.download(tickers=[s+".NS" for s in symbols],interval=interval,period=period,
+                        auto_adjust=False,prepost=False,group_by="ticker",threads=True,progress=False,timeout=20)
+    except Exception as e:
+        log(f"batch download failed ({len(symbols)}): {e}"); return {}
+    out={}
+    if raw is None or raw.empty: return out
+    for sym in symbols:
+        ticker=sym+".NS"
+        try:
+            if isinstance(raw.columns,pd.MultiIndex):
+                if ticker in raw.columns.get_level_values(0): d=raw[ticker].copy()
+                elif ticker in raw.columns.get_level_values(1): d=raw.xs(ticker,axis=1,level=1).copy()
+                else: continue
+            else:
+                if len(symbols)!=1: continue
+                d=raw.copy()
+            cols=["Open","High","Low","Close","Volume"]
+            if all(x in d.columns for x in cols):
+                d=d[cols].dropna()
+                if not d.empty: out[sym]=d
+        except Exception as e: log(f"extract {sym}: {e}")
+    return out
+
+def scan_one(sym,d):
+    if d is None or len(d)<60: return None
+    try:
+        d=calc(d); x=d.iloc[-1]
+        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,
+              x.ADX14>=20,x.RelVol>=1.2,x.STDir==1]
+        sc=sum(bool(v) for v in cond)
+        names=["EMA","VWAP","RSI","ADX","RelVol","Supertrend"]
+        row=(sym,f"{x.Close:.2f}",sc,f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
+             f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}",
+             "BULLISH" if x.STDir==1 else "BEARISH",", ".join(n for n,v in zip(names,cond) if v))
+        return sc,bool(x.STDir==1),row
+    except Exception as e:
+        log(f"scan {sym}: {e}"); return None
+
 
 def check_update():
     with urllib.request.urlopen(UPDATE_MANIFEST_URL,timeout=10) as r:
@@ -152,14 +225,15 @@ class App(tk.Tk):
         ttk.Label(c,text="Timeframe").pack(side="left")
         self.tf=ttk.Combobox(c,values=["15 min","1 hour","1 day"],state="readonly",width=10)
         self.tf.set("15 min"); self.tf.pack(side="left",padx=5)
+        ttk.Button(c,text="Refresh NSE List",command=lambda:self.refresh_symbols()).pack(side="left",padx=5)
         ttk.Label(c,text="Minimum confirmations").pack(side="left",padx=(15,5))
         self.score=tk.IntVar(value=5); ttk.Spinbox(c,from_=1,to=6,textvariable=self.score,width=5).pack(side="left")
-        ttk.Button(c,text="Scan All Stocks",command=self.scan).pack(side="left",padx=10)
+        ttk.Button(c,text="Scan All NSE Stocks",command=self.scan).pack(side="left",padx=10)
         self.status=ttk.Label(c,text="Ready"); self.status.pack(side="right")
-        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","Confirmations"]
+        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","Signal","Confirmations"]
         self.tree=ttk.Treeview(scan,columns=cols,show="headings")
         for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105)
-        self.tree.column("Confirmations",width=260); self.tree.pack(fill="both",expand=True,pady=8)
+        self.tree.column("Signal",width=105); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
 
         f=ttk.Frame(bt); f.pack(fill="x")
         ttk.Label(f,text="Timeframe").grid(row=0,column=0); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=1,padx=5)
@@ -177,32 +251,58 @@ class App(tk.Tk):
         for x in cols2: self.bt.heading(x,text=x); self.bt.column(x,width=135)
         self.bt.pack(fill="both",expand=True)
 
+    def refresh_symbols(self):
+        def worker():
+            try:
+                syms=get_nse_symbols(force=True)
+                self.q.put(("status",f"NSE list refreshed: {len(syms)} equity symbols available."))
+            except Exception as e:
+                self.q.put(("msg",f"Could not refresh NSE list:\n{e}"))
+        threading.Thread(target=worker,daemon=True).start()
+
     def scan(self):
         for x in self.tree.get_children(): self.tree.delete(x)
         self.stop_flag=False; threading.Thread(target=self.scan_worker,daemon=True).start()
 
     def scan_worker(self):
-        cfg={"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}[self.tf.get()]
-        for i,s in enumerate(SYMBOLS,1):
-            if self.stop_flag: break
-            try:
-                d=calc(fetch(s,*cfg))
-                if len(d)<60: continue
-                x=d.iloc[-1]
-                cond=[
-                    x.Close>x.EMA20 and x.EMA20>x.EMA50,
-                    x.Close>x.VWAP,
-                    x.RSI14>50,
-                    x.ADX14>=20,
-                    x.RelVol>=1.2,
-                    x.STDir==1]
-                sc=sum(bool(v) for v in cond)
-                if sc>=self.score.get():
-                    names=["EMA","VWAP","RSI","ADX","RelVol","Supertrend"]
-                    self.q.put(("row",(s,f"{x.Close:.2f}",sc,f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}","BULLISH" if x.STDir==1 else "BEARISH",", ".join(n for n,v in zip(names,cond) if v))))
-            except Exception as e: log(f"scan {s}: {e}")
-            self.q.put(("status",f"Scanning {i}/{len(SYMBOLS)}"))
-        self.q.put(("status","Scan complete"))
+        try:
+            interval,period={"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}[self.tf.get()]
+            symbols=get_nse_symbols()
+            self.q.put(("status",f"Loaded {len(symbols)} NSE equities. Downloading market data in parallel..."))
+            batch_size=50
+            batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
+            confirmed=[]; candidates=[]; completed=0; minimum=self.score.get()
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures=[pool.submit(fetch_batch,b,interval,period) for b in batches]
+                for fut in as_completed(futures):
+                    if self.stop_flag: break
+                    data_map=fut.result()
+                    for sym,d in data_map.items():
+                        result=scan_one(sym,d)
+                        if not result: continue
+                        sc,bullish,row=result
+                        if sc>=minimum:
+                            confirmed.append((sc,sym,row))
+                        elif bullish and sc>=max(4,minimum-1):
+                            candidates.append((sc,sym,row))
+                    completed+=len(data_map)
+                    self.q.put(("status",f"Downloaded/analyzed {completed}/{len(symbols)} stocks..."))
+            confirmed.sort(key=lambda z:(-z[0],z[1]))
+            for _,_,row in confirmed: self.q.put(("row",row))
+            if not confirmed:
+                candidates.sort(key=lambda z:(-z[0],z[1]))
+                for _,_,row in candidates[:15]:
+                    row=list(row); row[9]="CANDIDATE"; row[10]="Near confirmation: "+row[10]
+                    self.q.put(("candidate",tuple(row)))
+                if candidates:
+                    self.q.put(("status",f"No {minimum}/6 fully confirmed signals. Showing top {min(15,len(candidates))} bullish candidates."))
+                else:
+                    self.q.put(("status","Scan complete — no bullish candidates met the fallback threshold."))
+            else:
+                self.q.put(("status",f"Scan complete — {len(confirmed)} fully confirmed bullish signals across {len(symbols)} NSE equities."))
+        except Exception as e:
+            log("scan_worker: "+traceback.format_exc())
+            self.q.put(("msg",f"Scan failed:\n{e}"))
 
     def backtest(self):
         for x in self.bt.get_children(): self.bt.delete(x)
@@ -249,7 +349,7 @@ class App(tk.Tk):
         try:
             while True:
                 typ,data=self.q.get_nowait()
-                if typ=="row": self.tree.insert("", "end", values=data)
+                if typ in ("row","candidate"): self.tree.insert("", "end", values=data)
                 elif typ=="status": self.status.config(text=data); self.summary.config(text=data)
                 elif typ=="msg": messagebox.showinfo("NSE Bullish Scanner",data)
                 elif typ=="done":
