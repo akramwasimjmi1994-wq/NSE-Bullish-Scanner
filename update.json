@@ -1,6 +1,6 @@
 {
-  "version": "3.0.3",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.3/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.0.4",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.4/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "All NSE equity scanning, faster parallel data retrieval, and bullish candidate suggestions when no fully confirmed stocks are found."
+  "notes": "Fixed build: full current NSE equity universe, batched parallel market-data downloads, and bullish candidate suggestions when no fully confirmed signals are found."
 }
