@@ -282,34 +282,23 @@ def trade_setup(sym, interval):
     d = fetch(sym.upper().strip(), yf_interval, period=period)
     if d.empty or len(d) < 60:
         raise ValueError("Not enough market data available for this stock/timeframe.")
-    d = calc(d)
-    x = d.iloc[-1]
-    close = float(x.Close)
-    atrv = float(atr(d,14).iloc[-1])
-    regime=get_market_regime()
-    signal=evaluate_signal(
-        price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
-        vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
-        relative_volume=float(x.RelVol), supertrend_bullish=bool(x.STDir==1),
-        macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
-    )
-    score=signal.composite_score
-    entry = close
-    stop = max(0.01, entry - 1.5*atrv)
-    target = entry + 3.0*atrv
-    risk = entry - stop
-    reward = target - entry
-    breakout = float(d.High.tail(20).max())
+    daily = fetch(sym.upper().strip(),"1d",period="60d")
+    snap = build_signal_snapshot(sym.upper().strip(), d, get_market_regime(), daily)
+    if not snap:
+        raise ValueError("Could not calculate a complete signal for this stock/timeframe.")
+    cd=snap["data"]; x=snap["latest"]; score=snap["score"]
+    close=float(x.Close); atrv=float(atr(cd,14).iloc[-1])
+    entry=close; stop=max(0.01,entry-1.5*atrv); target=entry+3.0*atrv
+    risk=entry-stop; reward=target-entry; breakout=float(cd.High.tail(20).max())
     return {
-        "symbol": sym.upper().strip(), "price": close, "entry": entry,
-        "stop": stop, "target": target, "risk": risk, "reward": reward,
-        "rr": reward/risk if risk else 0, "atr": atrv, "score": score,
-        "rsi": float(x.RSI14), "adx": float(x.ADX14),
-        "relvol": float(x.RelVol), "ema20": float(x.EMA20),
-        "ema50": float(x.EMA50), "vwap": float(x.VWAP),
-        "macd": float(x.MACD), "macd_signal": float(x.MACDSignal),
-        "supertrend": "BULLISH" if x.STDir==1 else "BEARISH",
-        "breakout": breakout, "time": str(d.index[-1])
+        "symbol":sym.upper().strip(),"price":close,"entry":entry,"stop":stop,"target":target,
+        "risk":risk,"reward":reward,"rr":reward/risk if risk else 0,"atr":atrv,"score":score,
+        "rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),
+        "ema20":float(x.EMA20),"ema50":float(x.EMA50),"vwap":float(x.VWAP),
+        "macd":float(x.MACD),"macd_signal":float(x.MACDSignal),
+        "supertrend":"BULLISH" if x.STDir==1 else "BEARISH","breakout":breakout,
+        "time":str(cd.index[-1]),"liquid":snap["liquid"],
+        "signal":"BUY" if snap["signal"].qualifies and snap["liquid"] else "WATCH"
     }
 
 def dashboard_snapshot(sym, interval):
@@ -450,7 +439,7 @@ class App(tk.Tk):
         ttk.Label(dc,text="Timeframe").pack(side="left",padx=(15,5))
         self.dash_tf=ttk.Combobox(dc,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.dash_tf.set("15 min"); self.dash_tf.pack(side="left")
         ttk.Label(dc,text="Min score").pack(side="left",padx=(15,5))
-        self.dash_score=tk.IntVar(value=6); ttk.Spinbox(dc,from_=1,to=7,textvariable=self.dash_score,width=5).pack(side="left")
+        self.dash_score=tk.IntVar(value=70); ttk.Spinbox(dc,from_=0,to=100,textvariable=self.dash_score,width=5).pack(side="left")
         ttk.Label(dc,text="Refresh (sec)").pack(side="left",padx=(15,5))
         self.dash_refresh=tk.IntVar(value=30); ttk.Spinbox(dc,from_=15,to=300,increment=5,textvariable=self.dash_refresh,width=6).pack(side="left")
         ttk.Button(dc,text="Start Dashboard",command=self.start_dashboard,style="Accent.TButton").pack(side="left",padx=10)
@@ -617,17 +606,24 @@ class App(tk.Tk):
             results=[]
             for i in range(0,len(symbols),75):
                 if not getattr(self,"dash_running",False): break
-                data_map=fetch_batch(symbols[i:i+75],interval,period)
+                batch=symbols[i:i+75]
+                data_map=fetch_batch(batch,interval,period)
+                daily_map=fetch_batch(batch,"1d","60d")
                 for sym,d in data_map.items():
                     try:
-                        if len(d)<60: continue
-                        cd=calc(d); x=cd.iloc[-1]
-                        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
-                        score=int(sum(bool(v) for v in cond)); bullish=bool(x.STDir==1)
-                        atrv=float(atr(cd,14).iloc[-1]); price=float(x.Close)
-                        results.append({"symbol":sym,"price":price,"score":score,"signal":"BUY" if score>=minimum and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),"rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),"st":"BULLISH" if bullish else "BEARISH","entry":price,"stop":max(.01,price-1.5*atrv),"target":price+3*atrv,"time":str(cd.index[-1])})
+                        snap=build_signal_snapshot(sym,d,get_market_regime(),daily_map.get(sym))
+                        if not snap: continue
+                        x=snap["latest"]; cd=snap["data"]; score=snap["score"]; liquid=snap["liquid"]
+                        price=float(x.Close); atrv=float(atr(cd,14).iloc[-1])
+                        qualified=bool(snap["signal"].qualifies and liquid and score>=minimum)
+                        results.append({"symbol":sym,"price":price,"score":score,
+                                        "signal":"BUY" if qualified else "WATCH",
+                                        "rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),
+                                        "st":"BULLISH" if x.STDir==1 else "BEARISH",
+                                        "entry":price,"stop":max(.01,price-1.5*atrv),"target":price+3*atrv,
+                                        "time":str(cd.index[-1]),"liquid":liquid})
                     except Exception as e: log(f"dashboard {sym}: {e}")
-            results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="EXIT" else 2,-r["score"],r["symbol"]))
+            results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1,-r["score"],r["symbol"]))
             self.q.put(("dashboard",results))
         except Exception as e:
             log("dashboard_worker: "+traceback.format_exc()); self.q.put(("msg",f"Dashboard refresh failed:\n{e}"))
