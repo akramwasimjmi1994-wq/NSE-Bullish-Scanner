@@ -328,7 +328,7 @@ class App(tk.Tk):
         self.status=ttk.Label(c,text="● Ready",style="Status.TLabel"); self.status.pack(side="right")
         cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","MACD","Signal","Confirmations"]
         self.tree=ttk.Treeview(scan,columns=cols,show="headings")
-        for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105)
+        for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105,anchor="center")
         self.tree.column("Signal",width=105); self.tree.column("MACD",width=110); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
         self.tree.bind("<Double-1>", lambda e:self.use_selected_stock())
 
@@ -345,7 +345,7 @@ class App(tk.Tk):
         self.summary=ttk.Label(bt,text="No backtest run yet.",font=("Segoe UI",11,"bold")); self.summary.pack(fill="x",pady=8)
         cols2=["Symbol","SignalTime","Entry","Exit","Return %","Outcome","Score","Bars"]
         self.bt=ttk.Treeview(bt,columns=cols2,show="headings")
-        for x in cols2: self.bt.heading(x,text=x); self.bt.column(x,width=135)
+        for x in cols2: self.bt.heading(x,text=x); self.bt.column(x,width=135,anchor="center")
         self.bt.pack(fill="both",expand=True)
 
         # Single-stock trade setup
