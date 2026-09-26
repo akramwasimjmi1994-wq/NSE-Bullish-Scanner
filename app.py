@@ -218,7 +218,9 @@ def scan_one(sym,d):
         names=["EMA","VWAP","RSI","ADX","RelVol","Supertrend","MACD"]
         row=(sym,f"{x.Close:.2f}",sc,f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
              f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}",
-             "BULLISH" if x.STDir==1 else "BEARISH",", ".join(n for n,v in zip(names,cond) if v))
+             "BULLISH" if x.STDir==1 else "BEARISH",f"{x.MACD:.3f}",
+             "BUY" if sc>=6 and x.STDir==1 else "WATCH",
+             ", ".join(n for n,v in zip(names,cond) if v))
         return sc,bool(x.STDir==1),row
     except Exception as e:
         log(f"scan {sym}: {e}"); return None
@@ -258,6 +260,23 @@ def trade_setup(sym, interval):
         "breakout": breakout, "time": str(d.index[-1])
     }
 
+def dashboard_snapshot(sym, interval):
+    """Build a paper-trading dashboard snapshot from the latest Yahoo Finance bars."""
+    period = {"15 min":"60d","1 hour":"730d","1 day":"1y"}[interval]
+    yf_interval = {"15 min":"15m","1 hour":"60m","1 day":"1d"}[interval]
+    d = fetch(sym, yf_interval, period=period)
+    if d.empty or len(d) < 60: return None
+    d = calc(d); x = d.iloc[-1]
+    cond = [x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,
+            x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
+    score = int(sum(bool(v) for v in cond)); bullish = bool(x.STDir == 1)
+    entry=float(x.Close); atrv=float(atr(d,14).iloc[-1])
+    return {"symbol":sym,"price":entry,"score":score,
+            "signal":"BUY" if score>=6 and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),
+            "rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),
+            "st":"BULLISH" if bullish else "BEARISH","entry":entry,
+            "stop":max(.01,entry-1.5*atrv),"target":entry+3*atrv,"time":str(d.index[-1])}
+
 def check_update():
     with urllib.request.urlopen(UPDATE_MANIFEST_URL,timeout=10) as r:
         info=json.loads(r.read().decode())
@@ -273,7 +292,7 @@ class App(tk.Tk):
         self.geometry("1500x900")
         self.minsize(1200,700)
         self.protocol("WM_DELETE_WINDOW",self.destroy)
-        self.q=queue.Queue(); self.stop_flag=False; self.trades=[]
+        self.q=queue.Queue(); self.stop_flag=False; self.trades=[]; self.dash_running=False
         self.setup_styles()
         self.make_ui(); self.after(200,self.poll)
         log("Application started.")
@@ -312,7 +331,8 @@ class App(tk.Tk):
         ttk.Button(top,text="Check for Updates",command=self.update).pack(side="right")
         nb=ttk.Notebook(self,padding=(10,8)); nb.pack(fill="both",expand=True)
         scan=ttk.Frame(nb,padding=8); bt=ttk.Frame(nb,padding=8); setup=ttk.Frame(nb,padding=8)
-        nb.add(scan,text="Live Scanner"); nb.add(bt,text="Backtest"); nb.add(setup,text="Trade Setup")
+        dash=ttk.Frame(nb,padding=8); paper=ttk.Frame(nb,padding=8)
+        nb.add(scan,text="Live Scanner"); nb.add(dash,text="Real-Time Dashboard"); nb.add(paper,text="Paper Trading"); nb.add(bt,text="Backtest"); nb.add(setup,text="Trade Setup")
 
         c=ttk.Frame(scan); c.pack(fill="x")
         ttk.Label(c,text="Timeframe").pack(side="left")
@@ -331,6 +351,55 @@ class App(tk.Tk):
         for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105,anchor="center")
         self.tree.column("Signal",width=105); self.tree.column("MACD",width=110); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
         self.tree.bind("<Double-1>", lambda e:self.use_selected_stock())
+
+
+        # Real-time signal dashboard (paper/simulation only)
+        dc=ttk.Frame(dash); dc.pack(fill="x",pady=(0,8))
+        ttk.Label(dc,text="Universe").pack(side="left")
+        self.dash_u=ttk.Combobox(dc,values=["Nifty 50","Nifty 100","Nifty 200","All NSE"],state="readonly",width=12); self.dash_u.set("Nifty 50"); self.dash_u.pack(side="left",padx=5)
+        ttk.Label(dc,text="Timeframe").pack(side="left",padx=(15,5))
+        self.dash_tf=ttk.Combobox(dc,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.dash_tf.set("15 min"); self.dash_tf.pack(side="left")
+        ttk.Label(dc,text="Min score").pack(side="left",padx=(15,5))
+        self.dash_score=tk.IntVar(value=6); ttk.Spinbox(dc,from_=1,to=7,textvariable=self.dash_score,width=5).pack(side="left")
+        ttk.Label(dc,text="Refresh (sec)").pack(side="left",padx=(15,5))
+        self.dash_refresh=tk.IntVar(value=30); ttk.Spinbox(dc,from_=15,to=300,increment=5,textvariable=self.dash_refresh,width=6).pack(side="left")
+        ttk.Button(dc,text="Start Dashboard",command=self.start_dashboard,style="Accent.TButton").pack(side="left",padx=10)
+        ttk.Button(dc,text="Stop",command=self.stop_dashboard).pack(side="left")
+        self.dash_status=ttk.Label(dc,text="● Stopped",style="Status.TLabel"); self.dash_status.pack(side="right")
+        kpi=ttk.Frame(dash); kpi.pack(fill="x",pady=(0,8))
+        self.dash_kpis={}
+        for title,key in [("BUY SIGNALS","buy"),("EXIT SIGNALS","exit"),("WATCH","watch"),("OPEN P&L","open"),("REALIZED P&L","realized"),("TOTAL P&L","total")]:
+            box=ttk.Frame(kpi,padding=8); box.pack(side="left",fill="x",expand=True,padx=3)
+            ttk.Label(box,text=title,font=("Segoe UI",9,"bold")).pack(anchor="w")
+            v=tk.StringVar(value="0"); self.dash_kpis[key]=v
+            ttk.Label(box,textvariable=v,font=("Segoe UI",14,"bold")).pack(anchor="w",pady=(3,0))
+        dcols=["Symbol","Price","Score","Signal","RSI","ADX","RelVol","Supertrend","Entry","Stop","Target","Bar Time"]
+        self.dash_tree=ttk.Treeview(dash,columns=dcols,show="headings",height=16)
+        for col in dcols:
+            self.dash_tree.heading(col,text=col); self.dash_tree.column(col,width=100,anchor="center")
+        self.dash_tree.column("Symbol",width=110); self.dash_tree.column("Bar Time",width=175)
+        self.dash_tree.pack(fill="both",expand=True)
+        ttk.Label(dash,text="Data source: Yahoo Finance via yfinance. Paper trading only; no real orders are sent. Yahoo data may be delayed.",wraplength=1200).pack(anchor="w",pady=8)
+
+        # Dummy paper trading tab
+        pf=ttk.Frame(paper); pf.pack(fill="x",pady=5)
+        ttk.Label(pf,text="Stock").pack(side="left"); self.paper_symbol=ttk.Entry(pf,width=14); self.paper_symbol.pack(side="left",padx=5)
+        ttk.Label(pf,text="Qty").pack(side="left",padx=(12,5)); self.paper_qty=tk.IntVar(value=1); ttk.Spinbox(pf,from_=1,to=100000,textvariable=self.paper_qty,width=8).pack(side="left")
+        ttk.Label(pf,text="Price").pack(side="left",padx=(12,5)); self.paper_price=ttk.Entry(pf,width=12); self.paper_price.pack(side="left",padx=5)
+        ttk.Button(pf,text="BUY (Paper)",command=lambda:self.paper_order("BUY"),style="Accent.TButton").pack(side="left",padx=8)
+        ttk.Button(pf,text="SELL (Paper)",command=lambda:self.paper_order("SELL")).pack(side="left")
+        ttk.Button(pf,text="Refresh Prices",command=self.refresh_paper_prices).pack(side="left",padx=8)
+        self.paper_status=ttk.Label(paper,text="Paper account starts at ₹1,00,000. No real order will be sent.",style="Status.TLabel"); self.paper_status.pack(fill="x",pady=8)
+        self.paper_summary=ttk.Label(paper,text="Cash: ₹1,00,000 | Invested: ₹0 | Realized P&L: ₹0 | Unrealized P&L: ₹0 | Total P&L: ₹0",font=("Segoe UI",11,"bold")); self.paper_summary.pack(fill="x",pady=5)
+        pcols=["Symbol","Qty","Avg Buy","LTP","Invested","Market Value","Unrealized P&L","Return %"]
+        self.paper_tree=ttk.Treeview(paper,columns=pcols,show="headings")
+        for col in pcols: self.paper_tree.heading(col,text=col); self.paper_tree.column(col,width=135,anchor="center")
+        self.paper_tree.pack(fill="both",expand=True,pady=8)
+        tcols=["Time","Action","Symbol","Qty","Price","Value","Realized P&L"]
+        self.paper_trades_tree=ttk.Treeview(paper,columns=tcols,show="headings",height=8)
+        for col in tcols: self.paper_trades_tree.heading(col,text=col); self.paper_trades_tree.column(col,width=130,anchor="center")
+        self.paper_trades_tree.pack(fill="x")
+        self.paper_cash=100000.0; self.paper_positions={}; self.paper_trades=[]; self.paper_realized=0.0
 
         f=ttk.Frame(bt); f.pack(fill="x")
         ttk.Label(f,text="Stock Universe").grid(row=0,column=0); self.btu=ttk.Combobox(f,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12); self.btu.set("Nifty 50"); self.btu.grid(row=0,column=1,padx=5); ttk.Label(f,text="Timeframe").grid(row=0,column=2); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=3,padx=5)
@@ -403,6 +472,93 @@ class App(tk.Tk):
             log("trade_setup: "+traceback.format_exc())
             self.q.put(("msg",f"Trade setup failed for {sym}:\n{e}"))
 
+
+    def start_dashboard(self):
+        self.dash_running=True; self.dash_status.config(text="● Running"); self.dash_worker()
+
+    def stop_dashboard(self):
+        self.dash_running=False; self.dash_status.config(text="● Stopped")
+
+    def dash_worker(self):
+        if not getattr(self,"dash_running",False): return
+        threading.Thread(target=self.dashboard_fetch_worker,daemon=True).start()
+
+    def dashboard_fetch_worker(self):
+        try:
+            universe=self.dash_u.get(); tf=self.dash_tf.get(); minimum=self.dash_score.get()
+            symbols=get_index_symbols(universe)
+            interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[tf]
+            period={"15 min":"60d","1 hour":"730d","1 day":"1y"}[tf]
+            results=[]
+            for i in range(0,len(symbols),75):
+                if not getattr(self,"dash_running",False): break
+                data_map=fetch_batch(symbols[i:i+75],interval,period)
+                for sym,d in data_map.items():
+                    try:
+                        if len(d)<60: continue
+                        cd=calc(d); x=cd.iloc[-1]
+                        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
+                        score=int(sum(bool(v) for v in cond)); bullish=bool(x.STDir==1)
+                        atrv=float(atr(cd,14).iloc[-1]); price=float(x.Close)
+                        results.append({"symbol":sym,"price":price,"score":score,"signal":"BUY" if score>=minimum and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),"rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),"st":"BULLISH" if bullish else "BEARISH","entry":price,"stop":max(.01,price-1.5*atrv),"target":price+3*atrv,"time":str(cd.index[-1])})
+                    except Exception as e: log(f"dashboard {sym}: {e}")
+            results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="EXIT" else 2,-r["score"],r["symbol"]))
+            self.q.put(("dashboard",results))
+        except Exception as e:
+            log("dashboard_worker: "+traceback.format_exc()); self.q.put(("msg",f"Dashboard refresh failed:\n{e}"))
+
+    def dashboard_render(self,results):
+        for item in self.dash_tree.get_children(): self.dash_tree.delete(item)
+        buys=sum(r["signal"]=="BUY" for r in results); exits=sum(r["signal"]=="EXIT" for r in results); watches=sum(r["signal"]=="WATCH" for r in results)
+        for r in results[:100]:
+            self.dash_tree.insert("", "end", values=(r["symbol"],f"{r['price']:.2f}",r["score"],r["signal"],f"{r['rsi']:.1f}",f"{r['adx']:.1f}",f"{r['relvol']:.2f}",r["st"],f"{r['entry']:.2f}",f"{r['stop']:.2f}",f"{r['target']:.2f}",r["time"]))
+        self.dash_kpis["buy"].set(str(buys)); self.dash_kpis["exit"].set(str(exits)); self.dash_kpis["watch"].set(str(watches))
+        self.update_paper_positions()
+        self.dash_status.config(text=f"● Updated {datetime.now():%H:%M:%S} | {len(results)} stocks")
+        if getattr(self,"dash_running",False): self.after(max(15,int(self.dash_refresh.get()))*1000,self.dash_worker)
+
+    def paper_order(self,action):
+        sym=self.paper_symbol.get().strip().upper(); qty=int(self.paper_qty.get() or 0)
+        if not sym or qty<=0: messagebox.showinfo("Paper Trading","Enter a valid stock and quantity."); return
+        try: price=float(self.paper_price.get()) if self.paper_price.get().strip() else None
+        except Exception: price=None
+        if price is None or price<=0:
+            try:
+                d=fetch(sym,"15m",period="5d"); price=float(d.Close.iloc[-1]) if not d.empty else 0
+            except Exception: price=0
+        if price<=0: messagebox.showerror("Paper Trading","Could not get a price. Enter the price manually."); return
+        if action=="BUY":
+            cost=price*qty
+            if cost>self.paper_cash: messagebox.showerror("Paper Trading",f"Insufficient paper cash. Available ₹{self.paper_cash:,.2f}."); return
+            p=self.paper_positions.get(sym,{"qty":0,"avg":0.0}); newqty=p["qty"]+qty; p["avg"]=((p["avg"]*p["qty"])+(price*qty))/newqty; p["qty"]=newqty; self.paper_positions[sym]=p; self.paper_cash-=cost; realized=0.0
+        else:
+            p=self.paper_positions.get(sym)
+            if not p or p["qty"]<qty: messagebox.showerror("Paper Trading","You do not hold enough shares to sell."); return
+            realized=(price-p["avg"])*qty; self.paper_realized+=realized; self.paper_cash+=price*qty; p["qty"]-=qty
+            if p["qty"]==0: del self.paper_positions[sym]
+        stamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.paper_trades.append((stamp,action,sym,qty,price,price*qty,realized))
+        self.paper_trades_tree.insert("",0,values=(stamp,action,sym,qty,f"{price:.2f}",f"₹{price*qty:,.2f}",f"₹{realized:,.2f}"))
+        self.paper_status.config(text=f"{action} {qty} {sym} @ ₹{price:.2f} — PAPER ONLY")
+        self.update_paper_positions()
+
+    def refresh_paper_prices(self):
+        self.update_paper_positions(force=True)
+
+    def update_paper_positions(self,force=False):
+        total_unreal=0.0; invested=0.0
+        for item in self.paper_tree.get_children(): self.paper_tree.delete(item)
+        for sym,p in list(getattr(self,"paper_positions",{}).items()):
+            try:
+                d=fetch(sym,"15m",period="5d"); ltp=float(d.Close.iloc[-1]) if not d.empty else p["avg"]
+            except Exception: ltp=p["avg"]
+            inv=p["avg"]*p["qty"]; mv=ltp*p["qty"]; pnl=mv-inv; invested+=inv; total_unreal+=pnl
+            self.paper_tree.insert("", "end", values=(sym,p["qty"],f"{p['avg']:.2f}",f"{ltp:.2f}",f"₹{inv:,.2f}",f"₹{mv:,.2f}",f"₹{pnl:,.2f}",f"{(pnl/inv*100 if inv else 0):.2f}%"))
+        total=self.paper_realized+total_unreal
+        self.paper_summary.config(text=f"Cash: ₹{self.paper_cash:,.2f} | Invested: ₹{invested:,.2f} | Realized P&L: ₹{self.paper_realized:,.2f} | Unrealized P&L: ₹{total_unreal:,.2f} | Total P&L: ₹{total:,.2f}")
+        if hasattr(self,"dash_kpis"):
+            self.dash_kpis["open"].set(f"₹{total_unreal:,.0f}"); self.dash_kpis["realized"].set(f"₹{self.paper_realized:,.0f}"); self.dash_kpis["total"].set(f"₹{total:,.0f}")
+
     def refresh_universe(self):
         def worker():
             try:
@@ -445,7 +601,7 @@ class App(tk.Tk):
             if not confirmed:
                 candidates.sort(key=lambda z:(-z[0],z[1]))
                 for _,_,row in candidates[:15]:
-                    row=list(row); row[9]="CANDIDATE"; row[10]="Near confirmation: "+row[10]
+                    row=list(row); row[9]="CANDIDATE"; row[11]="WATCH"; row[12]="Near confirmation: "+row[12]
                     self.q.put(("candidate",tuple(row)))
                 if candidates:
                     self.q.put(("status",f"No {minimum}/7 fully confirmed signals. Showing top {min(15,len(candidates))} bullish candidates from {universe}."))
@@ -511,6 +667,8 @@ class App(tk.Tk):
                 if typ in ("row","candidate"): self.tree.insert("", "end", values=data)
                 elif typ=="status": self.status.config(text=data); self.summary.config(text=data)
                 elif typ=="msg": messagebox.showinfo("NSE Bullish Scanner",data)
+                elif typ=="dashboard":
+                    self.dashboard_render(data)
                 elif typ=="setup":
                     r=data
                     self.setup_summary.config(text=f"{r['symbol']} | {r['supertrend']} | Data as of {r['time']}")
