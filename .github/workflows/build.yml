@@ -1,0 +1,30 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: pyinstaller --onefile --windowed --name NSE_Bullish_Scanner app.py
+      - run: pyinstaller --onefile --windowed --name NSE_Bullish_Scanner_Updater updater.py
+      - name: Package update
+        shell: pwsh
+        run: Compress-Archive -Path dist/NSE_Bullish_Scanner.exe,dist/NSE_Bullish_Scanner_Updater.exe -DestinationPath NSE_Bullish_Scanner_Update.zip
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NSE-Bullish-Scanner-Windows
+          path: |
+            dist/NSE_Bullish_Scanner.exe
+            dist/NSE_Bullish_Scanner_Updater.exe
+            NSE_Bullish_Scanner_Update.zip
