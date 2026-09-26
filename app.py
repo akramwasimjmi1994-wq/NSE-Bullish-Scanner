@@ -244,13 +244,12 @@ def fetch_batch(symbols,interval,period):
         except Exception as e: log(f"extract {sym}: {e}")
     return out
 
-def scan_one(sym,d,regime,daily_d=None):
+def build_signal_snapshot(sym,d,regime,daily_d=None):
     if d is None or len(d)<60: return None
     try:
-        if daily_d is None or daily_d.empty: return None
-        avg_volume,avg_value=liquidity_metrics(daily_d)
-        if not passes_liquidity_filter(avg_volume,avg_value): return None
         d=calc(d); x=d.iloc[-1]
+        avg_volume,avg_value=liquidity_metrics(daily_d) if daily_d is not None and not daily_d.empty else (0,0)
+        liquid=passes_liquidity_filter(avg_volume,avg_value)
         signal=evaluate_signal(
             price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
             vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
@@ -258,14 +257,23 @@ def scan_one(sym,d,regime,daily_d=None):
             macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
         )
         sc=signal.composite_score
+        qualified=bool(signal.qualifies and liquid)
+        status="BUY" if qualified else ("WATCH" if liquid else "LOW LIQUIDITY")
         row=(sym,f"{x.Close:.2f}",f"{sc}/100",f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
              f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}",
-             "BULLISH" if x.STDir==1 else "BEARISH",f"{x.MACD:.3f}",
-             "BUY" if signal.qualifies else "WATCH")
-        return signal,row
+             "BULLISH" if x.STDir==1 else "BEARISH",f"{x.MACD:.3f}",status)
+        return {
+            "symbol":sym,"data":d,"latest":x,"signal":signal,"score":sc,
+            "liquid":liquid,"avg_volume":avg_volume,"avg_value":avg_value,
+            "status":status,"row":row
+        }
     except Exception as e:
-        log(f"scan {sym}: {e}"); return None
+        log(f"signal snapshot {sym}: {e}"); return None
 
+def scan_one(sym,d,regime,daily_d=None):
+    snap=build_signal_snapshot(sym,d,regime,daily_d)
+    if not snap: return None
+    return snap["signal"],snap["row"]
 
 
 def trade_setup(sym, interval):
