@@ -1,6 +1,6 @@
 {
-  "version": "3.0.6",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.6/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.0.7",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.0.7/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Added MACD as the 7th confirmation and increased batch scanning speed."
+  "notes": "Added stock universe selection: All NSE, Nifty 50, Nifty 100 and Nifty 200."
 }
