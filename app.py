@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.6"
+APP_VERSION = "3.0.7"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -81,6 +81,34 @@ def get_nse_symbols(force=False):
             if len(obj.get("symbols",[]))>=500: return list(obj["symbols"])
         except Exception: pass
     raise RuntimeError(f"Could not load NSE equity universe: {last_err}")
+
+INDEX_SYMBOL_CACHE = DATA_DIR / "index_symbols.json"
+INDEX_URLS = {
+    "Nifty 50": "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv",
+    "Nifty 100": "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
+    "Nifty 200": "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv",
+}
+def get_index_symbols(index_name, force=False):
+    if index_name == "All NSE": return get_nse_symbols(force=force)
+    key=index_name.replace(" ","_").lower()
+    cached=json.loads(INDEX_SYMBOL_CACHE.read_text(encoding="utf-8")) if INDEX_SYMBOL_CACHE.exists() else {}
+    item=cached.get(key,{})
+    if not force and datetime.now().timestamp()-float(item.get("timestamp",0)) < 86400 and len(item.get("symbols",[])) >= 20:
+        return list(item["symbols"])
+    try:
+        raw=_download_nse(INDEX_URLS[index_name])
+        df=pd.read_csv(io.StringIO(raw.decode("utf-8-sig",errors="replace")))
+        cols={str(x).strip().upper():x for x in df.columns}; sym_col=cols.get("SYMBOL")
+        if not sym_col: raise ValueError("No SYMBOL column")
+        syms=sorted({str(x).strip().upper() for x in df[sym_col].dropna() if str(x).strip() and str(x).strip().upper()!=index_name.upper()})
+        if len(syms)<20: raise ValueError(f"Only {len(syms)} symbols returned")
+        cached[key]={"timestamp":datetime.now().timestamp(),"symbols":syms}
+        INDEX_SYMBOL_CACHE.write_text(json.dumps(cached),encoding="utf-8")
+        return syms
+    except Exception as e:
+        log(f"{index_name} list failed: {e}")
+        if len(item.get("symbols",[])) >= 20: return list(item["symbols"])
+        raise RuntimeError(f"Could not load {index_name}: {e}")
 
 def ema(s,n): return s.ewm(span=n,adjust=False).mean()
 def rma(s,n): return s.ewm(alpha=1/n,adjust=False).mean()
@@ -259,10 +287,13 @@ class App(tk.Tk):
         ttk.Label(c,text="Timeframe").pack(side="left")
         self.tf=ttk.Combobox(c,values=["15 min","1 hour","1 day"],state="readonly",width=10)
         self.tf.set("15 min"); self.tf.pack(side="left",padx=5)
-        ttk.Button(c,text="Refresh NSE List",command=lambda:self.refresh_symbols()).pack(side="left",padx=5)
+        ttk.Label(c,text="Stock Universe").pack(side="left",padx=(15,5))
+        self.universe=ttk.Combobox(c,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12)
+        self.universe.set("All NSE"); self.universe.pack(side="left",padx=5)
+        ttk.Button(c,text="Refresh List",command=self.refresh_universe).pack(side="left",padx=5)
         ttk.Label(c,text="Minimum confirmations").pack(side="left",padx=(15,5))
         self.score=tk.IntVar(value=6); ttk.Spinbox(c,from_=1,to=7,textvariable=self.score,width=5).pack(side="left")
-        ttk.Button(c,text="Scan All NSE Stocks",command=self.scan).pack(side="left",padx=10)
+        ttk.Button(c,text="Scan Selected Stocks",command=self.scan).pack(side="left",padx=10)
         self.status=ttk.Label(c,text="Ready"); self.status.pack(side="right")
         cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","MACD","Signal","Confirmations"]
         self.tree=ttk.Treeview(scan,columns=cols,show="headings")
@@ -341,13 +372,13 @@ class App(tk.Tk):
             log("trade_setup: "+traceback.format_exc())
             self.q.put(("msg",f"Trade setup failed for {sym}:\n{e}"))
 
-    def refresh_symbols(self):
+    def refresh_universe(self):
         def worker():
             try:
-                syms=get_nse_symbols(force=True)
-                self.q.put(("status",f"NSE list refreshed: {len(syms)} equity symbols available."))
+                name=self.universe.get(); syms=get_index_symbols(name,force=True)
+                self.q.put(("status",f"{name} list refreshed: {len(syms)} stocks available."))
             except Exception as e:
-                self.q.put(("msg",f"Could not refresh NSE list:\n{e}"))
+                self.q.put(("msg",f"Could not refresh stock list:\n{e}"))
         threading.Thread(target=worker,daemon=True).start()
 
     def scan(self):
@@ -357,8 +388,9 @@ class App(tk.Tk):
     def scan_worker(self):
         try:
             interval,period={"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}[self.tf.get()]
-            symbols=get_nse_symbols()
-            self.q.put(("status",f"Loaded {len(symbols)} NSE equities. Downloading market data in parallel..."))
+            universe=self.universe.get()
+            symbols=get_index_symbols(universe)
+            self.q.put(("status",f"Loaded {len(symbols)} stocks from {universe}. Downloading market data in parallel..."))
             batch_size=100
             batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
             confirmed=[]; candidates=[]; completed=0; minimum=self.score.get()
@@ -385,11 +417,11 @@ class App(tk.Tk):
                     row=list(row); row[9]="CANDIDATE"; row[10]="Near confirmation: "+row[10]
                     self.q.put(("candidate",tuple(row)))
                 if candidates:
-                    self.q.put(("status",f"No {minimum}/6 fully confirmed signals. Showing top {min(15,len(candidates))} bullish candidates."))
+                    self.q.put(("status",f"No {minimum}/7 fully confirmed signals. Showing top {min(15,len(candidates))} bullish candidates from {universe}."))
                 else:
                     self.q.put(("status","Scan complete — no bullish candidates met the fallback threshold."))
             else:
-                self.q.put(("status",f"Scan complete — {len(confirmed)} fully confirmed bullish signals across {len(symbols)} NSE equities."))
+                self.q.put(("status",f"Scan complete — {len(confirmed)} fully confirmed bullish signals across {len(symbols)} stocks from {universe}."))
         except Exception as e:
             log("scan_worker: "+traceback.format_exc())
             self.q.put(("msg",f"Scan failed:\n{e}"))
