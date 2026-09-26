@@ -754,18 +754,34 @@ class App(tk.Tk):
                     d=fetch(sym,interval,start=self.start.get(),end=self.end.get())
                     if d.empty or len(d)<61: continue
                     d=calc(d)
+                    regime_data=fetch_historical_market_regime(
+                        (pd.to_datetime(self.start.get())-timedelta(days=80)).strftime("%Y-%m-%d"),
+                        (pd.to_datetime(self.end.get())+timedelta(days=2)).strftime("%Y-%m-%d"),
+                    )
+                    daily=fetch(sym,"1d",
+                                start=(pd.to_datetime(self.start.get())-timedelta(days=30)).strftime("%Y-%m-%d"),
+                                end=(pd.to_datetime(self.end.get())+timedelta(days=2)).strftime("%Y-%m-%d"))
                     for i in range(60,len(d)-1):
                         x=d.iloc[i]
-                        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
-                        score=sum(bool(v) for v in cond)
-                        if score<self.bs.get(): continue
+                        regime=historical_market_regime(regime_data,d.index[i])
+                        prior_daily=daily.loc[daily.index<=pd.Timestamp(d.index[i])].tail(20) if not daily.empty else daily
+                        avg_volume,avg_value=liquidity_metrics(prior_daily)
+                        if not passes_liquidity_filter(avg_volume,avg_value): continue
+                        signal=evaluate_signal(
+                            price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
+                            vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
+                            relative_volume=float(x.RelVol), supertrend_bullish=bool(x.STDir==1),
+                            macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
+                        )
+                        score=signal.composite_score
+                        if not signal.qualifies or score<self.bs.get(): continue
                         entry=float(d.Open.iloc[i+1]); target=entry*(1+self.target.get()/100); stop=entry*(1-self.stop.get()/100)
                         last=min(len(d)-1,i+1+self.bars.get()); outcome="TIME"; exitp=float(d.Close.iloc[last]); exit_i=last
                         for j in range(i+1,last+1):
                             if float(d.Low.iloc[j])<=stop: exitp=stop; outcome="LOSS"; exit_i=j; break
                             if float(d.High.iloc[j])>=target: exitp=target; outcome="WIN"; exit_i=j; break
                         ret=(exitp/entry-1)*100
-                        self.trades.append({"Symbol":sym,"SignalTime":str(d.index[i]),"Entry":entry,"Exit":exitp,"ReturnPct":ret,"Outcome":outcome,"Score":score,"BarsHeld":exit_i-(i+1)})
+                        self.trades.append({"Symbol":sym,"SignalTime":str(d.index[i]),"Entry":entry,"Exit":exitp,"ReturnPct":ret,"Outcome":outcome,"CompositeScore":score,"BarsHeld":exit_i-(i+1)})
                 except Exception as e: log(f"backtest {sym}: {e}")
             self.q.put(("done",self.trades)); self.q.put(("status",f"Backtest complete - {len(self.trades)} trades from {universe}."))
         except Exception as e:
@@ -814,7 +830,7 @@ class App(tk.Tk):
                         "setup_stop":f"{r['stop']:.2f}","setup_target":f"{r['target']:.2f}",
                         "setup_risk":f"{r['risk']:.2f}","setup_reward":f"{r['reward']:.2f}",
                         "setup_rr":f"1 : {r['rr']:.2f}","setup_atr":f"{r['atr']:.2f}",
-                        "setup_breakout":f"{r['breakout']:.2f}","setup_score":f"{r['score']}/6",
+                        "setup_breakout":f"{r['breakout']:.2f}","setup_score":f"{r['score']}/100",
                         "setup_rsi":f"{r['rsi']:.1f}","setup_adx":f"{r['adx']:.1f}",
                         "setup_relvol":f"{r['relvol']:.2f}","setup_st":r["supertrend"],"setup_macd":f"{r['macd']:.3f}"
                     }
@@ -825,7 +841,7 @@ class App(tk.Tk):
                         df=pd.DataFrame(data); wins=(df.ReturnPct>0).sum(); gp=df.loc[df.ReturnPct>0,"ReturnPct"].sum(); gl=abs(df.loc[df.ReturnPct<0,"ReturnPct"].sum())
                         self.summary.config(text=f"Trades: {len(df)} | Wins: {wins} | Win rate: {wins/len(df)*100:.2f}% | Avg return: {df.ReturnPct.mean():.2f}% | Profit factor: {(gp/gl if gl else float('inf')):.2f}")
                     else: self.summary.config(text="No signals found.")
-                    for r in data: self.bt.insert("", "end", values=(r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',f'{r["Exit"]:.2f}',f'{r["ReturnPct"]:.2f}%',r["Outcome"],r["Score"],r["BarsHeld"]))
+                    for r in data: self.bt.insert("", "end", values=(r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',f'{r["Exit"]:.2f}',f'{r["ReturnPct"]:.2f}%',r["Outcome"],r["CompositeScore"],r["BarsHeld"]))
                 elif typ=="update":
                     info=data
                     if messagebox.askyesno("Update available",f"Version {info['version']} is available.\n\n{info.get('notes','')}\n\nUpdate now?"):
