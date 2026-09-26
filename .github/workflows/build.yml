@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -28,3 +31,10 @@ jobs:
             dist/NSE_Bullish_Scanner.exe
             dist/NSE_Bullish_Scanner_Updater.exe
             NSE_Bullish_Scanner_Update.zip
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: NSE_Bullish_Scanner_Update.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
