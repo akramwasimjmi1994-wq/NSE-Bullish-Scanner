@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.4"
+APP_VERSION = "3.0.5"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -194,6 +194,38 @@ def scan_one(sym,d):
         log(f"scan {sym}: {e}"); return None
 
 
+
+def trade_setup(sym, interval):
+    period = {"15 min":"60d","1 hour":"730d","1 day":"10y"}[interval]
+    d = fetch(sym.upper().strip(), interval, period=period)
+    if d.empty or len(d) < 60:
+        raise ValueError("Not enough market data available for this stock/timeframe.")
+    d = calc(d)
+    x = d.iloc[-1]
+    close = float(x.Close)
+    atrv = float(atr(d,14).iloc[-1])
+    score = sum(bool(v) for v in [
+        x.Close>x.EMA20 and x.EMA20>x.EMA50,
+        x.Close>x.VWAP, x.RSI14>50, x.ADX14>=20,
+        x.RelVol>=1.2, x.STDir==1
+    ])
+    entry = close
+    stop = max(0.01, entry - 1.5*atrv)
+    target = entry + 3.0*atrv
+    risk = entry - stop
+    reward = target - entry
+    breakout = float(d.High.tail(20).max())
+    return {
+        "symbol": sym.upper().strip(), "price": close, "entry": entry,
+        "stop": stop, "target": target, "risk": risk, "reward": reward,
+        "rr": reward/risk if risk else 0, "atr": atrv, "score": score,
+        "rsi": float(x.RSI14), "adx": float(x.ADX14),
+        "relvol": float(x.RelVol), "ema20": float(x.EMA20),
+        "ema50": float(x.EMA50), "vwap": float(x.VWAP),
+        "supertrend": "BULLISH" if x.STDir==1 else "BEARISH",
+        "breakout": breakout, "time": str(d.index[-1])
+    }
+
 def check_update():
     with urllib.request.urlopen(UPDATE_MANIFEST_URL,timeout=10) as r:
         info=json.loads(r.read().decode())
@@ -218,8 +250,8 @@ class App(tk.Tk):
         ttk.Label(top,text=f"v{APP_VERSION}").pack(side="left",padx=10)
         ttk.Button(top,text="Check for Updates",command=self.update).pack(side="right")
         nb=ttk.Notebook(self); nb.pack(fill="both",expand=True)
-        scan=ttk.Frame(nb,padding=8); bt=ttk.Frame(nb,padding=8)
-        nb.add(scan,text="Live Scanner"); nb.add(bt,text="Backtest")
+        scan=ttk.Frame(nb,padding=8); bt=ttk.Frame(nb,padding=8); setup=ttk.Frame(nb,padding=8)
+        nb.add(scan,text="Live Scanner"); nb.add(bt,text="Backtest"); nb.add(setup,text="Trade Setup")
 
         c=ttk.Frame(scan); c.pack(fill="x")
         ttk.Label(c,text="Timeframe").pack(side="left")
@@ -234,6 +266,7 @@ class App(tk.Tk):
         self.tree=ttk.Treeview(scan,columns=cols,show="headings")
         for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105)
         self.tree.column("Signal",width=105); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
+        self.tree.bind("<Double-1>", lambda e:self.use_selected_stock())
 
         f=ttk.Frame(bt); f.pack(fill="x")
         ttk.Label(f,text="Timeframe").grid(row=0,column=0); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=1,padx=5)
@@ -250,6 +283,61 @@ class App(tk.Tk):
         self.bt=ttk.Treeview(bt,columns=cols2,show="headings")
         for x in cols2: self.bt.heading(x,text=x); self.bt.column(x,width=135)
         self.bt.pack(fill="both",expand=True)
+
+        # Single-stock trade setup
+        sf=ttk.Frame(setup); sf.pack(fill="x",pady=5)
+        ttk.Label(sf,text="NSE Stock").pack(side="left")
+        self.setup_symbol=ttk.Entry(sf,width=16); self.setup_symbol.pack(side="left",padx=5)
+        ttk.Label(sf,text="Timeframe").pack(side="left",padx=(15,5))
+        self.setup_tf=ttk.Combobox(sf,values=["15 min","1 hour","1 day"],state="readonly",width=10)
+        self.setup_tf.set("1 day"); self.setup_tf.pack(side="left")
+        ttk.Button(sf,text="Calculate Entry & Exit",command=self.calculate_setup).pack(side="left",padx=12)
+        ttk.Button(sf,text="Use Selected Stock",command=self.use_selected_stock).pack(side="left")
+
+        self.setup_summary=ttk.Label(setup,text="Select a stock and calculate its trade setup.",font=("Segoe UI",12,"bold"))
+        self.setup_summary.pack(fill="x",pady=15)
+        sg=ttk.Frame(setup); sg.pack(fill="x")
+        labels=[
+            ("Current Price","setup_price"),("Suggested Entry","setup_entry"),
+            ("Stop Loss","setup_stop"),("Target","setup_target"),
+            ("Risk / Share","setup_risk"),("Reward / Share","setup_reward"),
+            ("Risk : Reward","setup_rr"),("ATR(14)","setup_atr"),
+            ("20-Bar Breakout","setup_breakout"),("Scanner Score","setup_score"),
+            ("RSI","setup_rsi"),("ADX","setup_adx"),("Rel Volume","setup_relvol"),
+            ("Supertrend","setup_st")
+        ]
+        self.setup_vars={}
+        for i,(lab,key) in enumerate(labels):
+            r=i//4; c=(i%4)*2
+            ttk.Label(sg,text=lab).grid(row=r,column=c,sticky="w",padx=8,pady=8)
+            v=tk.StringVar(value="-"); self.setup_vars[key]=v
+            ttk.Label(sg,textvariable=v,font=("Segoe UI",10,"bold")).grid(row=r,column=c+1,sticky="w",padx=8,pady=8)
+        ttk.Label(setup,text="Method: long setup using current price as entry, 1.5x ATR stop and 3x ATR target (2R). These are algorithmic reference levels, not guaranteed prices.",wraplength=1100).pack(anchor="w",pady=18)
+
+    def use_selected_stock(self):
+        sel=self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Trade Setup","Select a stock in Live Scanner first.")
+            return
+        vals=self.tree.item(sel[0],"values")
+        if vals:
+            self.setup_symbol.delete(0,"end"); self.setup_symbol.insert(0,vals[0])
+
+    def calculate_setup(self):
+        sym=self.setup_symbol.get().strip().upper()
+        if not sym:
+            messagebox.showinfo("Trade Setup","Enter an NSE stock symbol, for example RELIANCE.")
+            return
+        self.setup_summary.config(text=f"Calculating setup for {sym}...")
+        threading.Thread(target=self.setup_worker,args=(sym,self.setup_tf.get()),daemon=True).start()
+
+    def setup_worker(self,sym,tf):
+        try:
+            result=trade_setup(sym,tf)
+            self.q.put(("setup",result))
+        except Exception as e:
+            log("trade_setup: "+traceback.format_exc())
+            self.q.put(("msg",f"Trade setup failed for {sym}:\n{e}"))
 
     def refresh_symbols(self):
         def worker():
@@ -352,6 +440,19 @@ class App(tk.Tk):
                 if typ in ("row","candidate"): self.tree.insert("", "end", values=data)
                 elif typ=="status": self.status.config(text=data); self.summary.config(text=data)
                 elif typ=="msg": messagebox.showinfo("NSE Bullish Scanner",data)
+                elif typ=="setup":
+                    r=data
+                    self.setup_summary.config(text=f"{r['symbol']} | {r['supertrend']} | Data as of {r['time']}")
+                    vals={
+                        "setup_price":f"{r['price']:.2f}","setup_entry":f"{r['entry']:.2f}",
+                        "setup_stop":f"{r['stop']:.2f}","setup_target":f"{r['target']:.2f}",
+                        "setup_risk":f"{r['risk']:.2f}","setup_reward":f"{r['reward']:.2f}",
+                        "setup_rr":f"1 : {r['rr']:.2f}","setup_atr":f"{r['atr']:.2f}",
+                        "setup_breakout":f"{r['breakout']:.2f}","setup_score":f"{r['score']}/6",
+                        "setup_rsi":f"{r['rsi']:.1f}","setup_adx":f"{r['adx']:.1f}",
+                        "setup_relvol":f"{r['relvol']:.2f}","setup_st":r["supertrend"]
+                    }
+                    for k,v in vals.items(): self.setup_vars[k].set(v)
                 elif typ=="done":
                     self.trades=data
                     if data:
