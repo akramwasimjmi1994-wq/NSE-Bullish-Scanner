@@ -3,6 +3,8 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -32,9 +34,10 @@ jobs:
             dist/NSE_Bullish_Scanner_Updater.exe
             NSE_Bullish_Scanner_Update.zip
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: NSE_Bullish_Scanner_Update.zip
+          tag_name: v3.0.4
           generate_release_notes: true
           fail_on_unmatched_files: true
