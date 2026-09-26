@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.4.1"
+APP_VERSION = "3.4.2"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -534,6 +534,17 @@ class App(tk.Tk):
             ttk.Label(sg,textvariable=v,font=("Segoe UI",10,"bold")).grid(row=r,column=c+1,sticky="w",padx=8,pady=8)
         ttk.Label(frame,text="Method: long frame using current price as entry, 1.5x ATR stop and 3x ATR target (2R). These are algorithmic reference levels, not guaranteed prices.",wraplength=1100).pack(anchor="w",pady=18)
 
+
+    def show_page(self,key):
+        page=self.pages.get(key)
+        if page is None:
+            return
+        for p in self.pages.values():
+            p.pack_forget()
+        page.pack(fill="both",expand=True)
+        for k,btn in self.nav_buttons.items():
+            btn.configure(style="Nav.Active.TButton" if k==key else "Nav.TButton")
+        self.current_page=key
 
     def on_stock_select(self,event=None):
         sel=self.tree.selection()
