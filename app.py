@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.3.0"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -302,151 +302,87 @@ class App(tk.Tk):
         style=ttk.Style(self)
         try: style.theme_use("clam")
         except Exception: pass
-        self.configure(bg="#0b1220")
-        style.configure(".",font=("Segoe UI",10),background="#0b1220",foreground="#dbe4f0")
-        style.configure("TFrame",background="#0b1220")
-        style.configure("Header.TFrame",background="#0f1a2b")
-        style.configure("Header.TLabel",background="#0f1a2b",foreground="#f8fafc")
-        style.configure("Sub.TLabel",background="#0f1a2b",foreground="#94a3b8")
-        style.configure("TLabel",background="#0b1220",foreground="#cbd5e1")
-        style.configure("TButton",background="#1d4ed8",foreground="#ffffff",padding=(12,7))
-        style.map("TButton",background=[("active","#2563eb")])
-        style.configure("Accent.TButton",background="#16a34a",foreground="#ffffff",padding=(14,8),font=("Segoe UI Semibold",10))
-        style.map("Accent.TButton",background=[("active","#22c55e")])
-        style.configure("TCombobox",fieldbackground="#111b2e",background="#111b2e",foreground="#e2e8f0")
-        style.configure("TEntry",fieldbackground="#111b2e",foreground="#e2e8f0",insertcolor="#ffffff")
-        style.configure("TSpinbox",fieldbackground="#111b2e",foreground="#e2e8f0")
-        style.configure("TNotebook",background="#0b1220",borderwidth=0)
-        style.configure("TNotebook.Tab",background="#111b2e",foreground="#94a3b8",padding=(18,9))
-        style.map("TNotebook.Tab",background=[("selected","#1d4ed8")],foreground=[("selected","#ffffff")])
-        style.configure("Treeview",background="#0f172a",fieldbackground="#0f172a",foreground="#dbe4f0",rowheight=30)
-        style.configure("Treeview.Heading",background="#17233a",foreground="#e2e8f0",relief="flat",padding=(8,8))
-        style.map("Treeview",background=[("selected","#1d4ed8")],foreground=[("selected","#ffffff")])
-        style.configure("Status.TLabel",background="#111b2e",foreground="#93c5fd",padding=(10,7))
-
+        self.configure(bg="#0d1117")
+        style.configure(".",font=("Segoe UI",10),background="#0d1117",foreground="#d1d4dc")
+        style.configure("TFrame",background="#0d1117")
+        style.configure("Header.TFrame",background="#131722")
+        style.configure("TButton",background="#1e222d",foreground="#d1d4dc",padding=(12,8),borderwidth=0)
+        style.map("TButton",background=[("active","#2a2e39")])
+        style.configure("Nav.TButton",background="#131722",foreground="#787b86",padding=(16,10),font=("Segoe UI Semibold",10),borderwidth=0)
+        style.map("Nav.TButton",background=[("active","#1e222d")],foreground=[("active","#f5f7fa")])
+        style.configure("Accent.TButton",background="#26a69a",foreground="#ffffff",padding=(14,9),font=("Segoe UI Semibold",10),borderwidth=0)
+        style.map("Accent.TButton",background=[("active","#2bbbad")])
+        style.configure("Danger.TButton",background="#ef5350",foreground="#ffffff",padding=(12,8),borderwidth=0)
+        style.map("Danger.TButton",background=[("active","#ff625f")])
+        style.configure("TCombobox",fieldbackground="#1e222d",background="#1e222d",foreground="#d1d4dc")
+        style.configure("TEntry",fieldbackground="#1e222d",foreground="#d1d4dc",insertcolor="#ffffff")
+        style.configure("TSpinbox",fieldbackground="#1e222d",foreground="#d1d4dc")
+        style.configure("Treeview",background="#131722",fieldbackground="#131722",foreground="#d1d4dc",rowheight=42,borderwidth=0,font=("Segoe UI",10))
+        style.configure("Treeview.Heading",background="#1e222d",foreground="#787b86",relief="flat",padding=(10,9),font=("Segoe UI",9,"bold"))
+        style.map("Treeview",background=[("selected","#263342")],foreground=[("selected","#ffffff")])
+        style.configure("TProgressbar",troughcolor="#1e222d",background="#26a69a",bordercolor="#2a2e39",lightcolor="#26a69a",darkcolor="#26a69a")
+        style.configure("Status.TLabel",background="#1e222d",foreground="#26a69a",padding=(10,7))
     def make_ui(self):
-        top=ttk.Frame(self,padding=(18,14),style="Header.TFrame"); top.pack(fill="x")
-        ttk.Label(top,text="NSE BULLISH SCANNER",font=("Segoe UI",18,"bold"),style="Header.TLabel").pack(side="left")
-        ttk.Label(top,text=f"v{APP_VERSION}",style="Sub.TLabel").pack(side="left",padx=12)
-        ttk.Button(top,text="Check for Updates",command=self.update).pack(side="right")
-        nb=ttk.Notebook(self,padding=(10,8)); nb.pack(fill="both",expand=True)
-        scan=ttk.Frame(nb,padding=8); bt=ttk.Frame(nb,padding=8); setup=ttk.Frame(nb,padding=8)
-        dash=ttk.Frame(nb,padding=8); paper=ttk.Frame(nb,padding=8)
-        nb.add(scan,text="Live Scanner"); nb.add(dash,text="Real-Time Dashboard"); nb.add(paper,text="Paper Trading"); nb.add(bt,text="Backtest"); nb.add(setup,text="Trade Setup")
+        top=tk.Frame(self,bg="#131722",height=64); top.pack(fill="x"); top.pack_propagate(False)
+        tk.Label(top,text="NSE",bg="#131722",fg="#26a69a",font=("Segoe UI",19,"bold")).pack(side="left",padx=(20,4))
+        tk.Label(top,text="BULLISH TERMINAL",bg="#131722",fg="#f5f7fa",font=("Segoe UI",17,"bold")).pack(side="left")
+        tk.Label(top,text=f"v{APP_VERSION}",bg="#131722",fg="#787b86",font=("Segoe UI",9)).pack(side="left",padx=12)
+        self.status=ttk.Label(top,text="● READY",style="Status.TLabel"); self.status.pack(side="right",padx=16)
+        ttk.Button(top,text="Check for Updates",command=self.update).pack(side="right",padx=6)
 
-        c=ttk.Frame(scan); c.pack(fill="x")
-        ttk.Label(c,text="Timeframe").pack(side="left")
-        self.tf=ttk.Combobox(c,values=["15 min","1 hour","1 day"],state="readonly",width=10)
-        self.tf.set("15 min"); self.tf.pack(side="left",padx=5)
-        ttk.Label(c,text="Stock Universe").pack(side="left",padx=(15,5))
-        self.universe=ttk.Combobox(c,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12)
-        self.universe.set("All NSE"); self.universe.pack(side="left",padx=5)
-        ttk.Button(c,text="Refresh List",command=self.refresh_universe).pack(side="left",padx=5)
-        ttk.Label(c,text="Minimum confirmations").pack(side="left",padx=(15,5))
-        self.score=tk.IntVar(value=6); ttk.Spinbox(c,from_=1,to=7,textvariable=self.score,width=5).pack(side="left")
-        ttk.Button(c,text="⚡ Scan Selected Stocks",command=self.scan,style="Accent.TButton").pack(side="left",padx=10)
-        self.status=ttk.Label(c,text="● Ready",style="Status.TLabel"); self.status.pack(side="right")
-        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","MACD","Signal","Confirmations"]
-        self.tree=ttk.Treeview(scan,columns=cols,show="headings")
-        for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105,anchor="center")
-        self.tree.column("Signal",width=105); self.tree.column("MACD",width=110); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
-        self.tree.bind("<Double-1>", lambda e:self.use_selected_stock())
+        nav=tk.Frame(self,bg="#131722",height=48); nav.pack(fill="x"); nav.pack_propagate(False)
+        self.nav_buttons={}; self.pages={}
+        for key,label in [("scanner","SCANNER"),("dash","REAL-TIME"),("paper","PAPER TRADING"),("bt","BACKTEST"),("setup","TRADE SETUP")]:
+            btn=ttk.Button(nav,text=label,style="Nav.TButton",command=lambda k=key:self.show_page(k))
+            btn.pack(side="left",padx=(12 if not self.nav_buttons else 2,2)); self.nav_buttons[key]=btn
 
+        content=tk.Frame(self,bg="#0d1117"); content.pack(fill="both",expand=True,padx=12,pady=10)
+        scan=tk.Frame(content,bg="#0d1117"); dash=tk.Frame(content,bg="#0d1117"); paper=tk.Frame(content,bg="#0d1117"); bt=tk.Frame(content,bg="#0d1117"); setup=tk.Frame(content,bg="#0d1117")
+        self.pages={"scanner":scan,"dash":dash,"paper":paper,"bt":bt,"setup":setup}
 
-        # Real-time signal dashboard (paper/simulation only)
-        dc=ttk.Frame(dash); dc.pack(fill="x",pady=(0,8))
-        ttk.Label(dc,text="Universe").pack(side="left")
-        self.dash_u=ttk.Combobox(dc,values=["Nifty 50","Nifty 100","Nifty 200","All NSE"],state="readonly",width=12); self.dash_u.set("Nifty 50"); self.dash_u.pack(side="left",padx=5)
-        ttk.Label(dc,text="Timeframe").pack(side="left",padx=(15,5))
-        self.dash_tf=ttk.Combobox(dc,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.dash_tf.set("15 min"); self.dash_tf.pack(side="left")
-        ttk.Label(dc,text="Min score").pack(side="left",padx=(15,5))
-        self.dash_score=tk.IntVar(value=6); ttk.Spinbox(dc,from_=1,to=7,textvariable=self.dash_score,width=5).pack(side="left")
-        ttk.Label(dc,text="Refresh (sec)").pack(side="left",padx=(15,5))
-        self.dash_refresh=tk.IntVar(value=30); ttk.Spinbox(dc,from_=15,to=300,increment=5,textvariable=self.dash_refresh,width=6).pack(side="left")
-        ttk.Button(dc,text="Start Dashboard",command=self.start_dashboard,style="Accent.TButton").pack(side="left",padx=10)
-        ttk.Button(dc,text="Stop",command=self.stop_dashboard).pack(side="left")
-        self.dash_status=ttk.Label(dc,text="● Stopped",style="Status.TLabel"); self.dash_status.pack(side="right")
-        kpi=ttk.Frame(dash); kpi.pack(fill="x",pady=(0,8))
-        self.dash_kpis={}
-        for title,key in [("BUY SIGNALS","buy"),("EXIT SIGNALS","exit"),("WATCH","watch"),("OPEN P&L","open"),("REALIZED P&L","realized"),("TOTAL P&L","total")]:
-            box=ttk.Frame(kpi,padding=8); box.pack(side="left",fill="x",expand=True,padx=3)
-            ttk.Label(box,text=title,font=("Segoe UI",9,"bold")).pack(anchor="w")
-            v=tk.StringVar(value="0"); self.dash_kpis[key]=v
-            ttk.Label(box,textvariable=v,font=("Segoe UI",14,"bold")).pack(anchor="w",pady=(3,0))
-        dcols=["Symbol","Price","Score","Signal","RSI","ADX","RelVol","Supertrend","Entry","Stop","Target","Bar Time"]
-        self.dash_tree=ttk.Treeview(dash,columns=dcols,show="headings",height=16)
-        for col in dcols:
-            self.dash_tree.heading(col,text=col); self.dash_tree.column(col,width=100,anchor="center")
-        self.dash_tree.column("Symbol",width=110); self.dash_tree.column("Bar Time",width=175)
-        self.dash_tree.pack(fill="both",expand=True)
-        ttk.Label(dash,text="Data source: Yahoo Finance via yfinance. Paper trading only; no real orders are sent. Yahoo data may be delayed.",wraplength=1200).pack(anchor="w",pady=8)
+        controls=tk.Frame(scan,bg="#0d1117"); controls.pack(fill="x",pady=(0,10))
+        tk.Label(controls,text="TIMEFRAME",bg="#0d1117",fg="#787b86",font=("Segoe UI",9,"bold")).pack(side="left")
+        self.tf=ttk.Combobox(controls,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.tf.set("15 min"); self.tf.pack(side="left",padx=7)
+        tk.Label(controls,text="UNIVERSE",bg="#0d1117",fg="#787b86",font=("Segoe UI",9,"bold")).pack(side="left",padx=(16,5))
+        self.universe=ttk.Combobox(controls,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12); self.universe.set("All NSE"); self.universe.pack(side="left",padx=5)
+        tk.Label(controls,text="MIN SCORE",bg="#0d1117",fg="#787b86",font=("Segoe UI",9,"bold")).pack(side="left",padx=(16,5))
+        self.score=tk.IntVar(value=6); ttk.Spinbox(controls,from_=1,to=7,textvariable=self.score,width=5).pack(side="left")
+        ttk.Button(controls,text="REFRESH LIST",command=self.refresh_universe).pack(side="left",padx=7)
+        ttk.Button(controls,text="⚡ SCAN MARKET",command=self.scan,style="Accent.TButton").pack(side="left",padx=7)
 
-        # Dummy paper trading tab
-        pf=ttk.Frame(paper); pf.pack(fill="x",pady=5)
-        ttk.Label(pf,text="Stock").pack(side="left"); self.paper_symbol=ttk.Entry(pf,width=14); self.paper_symbol.pack(side="left",padx=5)
-        ttk.Label(pf,text="Qty").pack(side="left",padx=(12,5)); self.paper_qty=tk.IntVar(value=1); ttk.Spinbox(pf,from_=1,to=100000,textvariable=self.paper_qty,width=8).pack(side="left")
-        ttk.Label(pf,text="Price").pack(side="left",padx=(12,5)); self.paper_price=ttk.Entry(pf,width=12); self.paper_price.pack(side="left",padx=5)
-        ttk.Button(pf,text="BUY (Paper)",command=lambda:self.paper_order("BUY"),style="Accent.TButton").pack(side="left",padx=8)
-        ttk.Button(pf,text="SELL (Paper)",command=lambda:self.paper_order("SELL")).pack(side="left")
-        ttk.Button(pf,text="Refresh Prices",command=self.refresh_paper_prices).pack(side="left",padx=8)
-        self.paper_status=ttk.Label(paper,text="Paper account starts at ₹1,00,000. No real order will be sent.",style="Status.TLabel"); self.paper_status.pack(fill="x",pady=8)
-        self.paper_summary=ttk.Label(paper,text="Cash: ₹1,00,000 | Invested: ₹0 | Realized P&L: ₹0 | Unrealized P&L: ₹0 | Total P&L: ₹0",font=("Segoe UI",11,"bold")); self.paper_summary.pack(fill="x",pady=5)
-        pcols=["Symbol","Qty","Avg Buy","LTP","Invested","Market Value","Unrealized P&L","Return %"]
-        self.paper_tree=ttk.Treeview(paper,columns=pcols,show="headings")
-        for col in pcols: self.paper_tree.heading(col,text=col); self.paper_tree.column(col,width=135,anchor="center")
-        self.paper_tree.pack(fill="both",expand=True,pady=8)
-        tcols=["Time","Action","Symbol","Qty","Price","Value","Realized P&L"]
-        self.paper_trades_tree=ttk.Treeview(paper,columns=tcols,show="headings",height=8)
-        for col in tcols: self.paper_trades_tree.heading(col,text=col); self.paper_trades_tree.column(col,width=130,anchor="center")
-        self.paper_trades_tree.pack(fill="x")
-        self.paper_cash=100000.0; self.paper_positions={}; self.paper_trades=[]; self.paper_realized=0.0
+        cards=tk.Frame(scan,bg="#0d1117"); cards.pack(fill="x",pady=(0,10)); self.scan_kpis={}
+        for title,key in [("STOCKS SCANNED","scanned"),("BULLISH SIGNALS","bullish"),("7/7 CONFIRMED","confirmed"),("NEAR-CONFIRMATION","candidates"),("SCAN DURATION","duration")]:
+            card=tk.Frame(cards,bg="#1e222d",highlightbackground="#2a2e39",highlightthickness=1); card.pack(side="left",fill="both",expand=True,padx=4,ipady=7)
+            tk.Label(card,text=title,bg="#1e222d",fg="#787b86",font=("Segoe UI",9,"bold")).pack(anchor="w",padx=14,pady=(7,0))
+            v=tk.StringVar(value="0"); self.scan_kpis[key]=v
+            tk.Label(card,textvariable=v,bg="#1e222d",fg="#f5f7fa",font=("Segoe UI",20,"bold")).pack(anchor="w",padx=14,pady=(2,7))
 
-        f=ttk.Frame(bt); f.pack(fill="x")
-        ttk.Label(f,text="Stock Universe").grid(row=0,column=0); self.btu=ttk.Combobox(f,values=["All NSE","Nifty 50","Nifty 100","Nifty 200"],state="readonly",width=12); self.btu.set("Nifty 50"); self.btu.grid(row=0,column=1,padx=5); ttk.Label(f,text="Timeframe").grid(row=0,column=2); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=3,padx=5)
-        ttk.Label(f,text="Start").grid(row=0,column=4); self.start=ttk.Entry(f,width=12); self.start.insert(0,(datetime.now()-timedelta(days=365)).strftime("%Y-%m-%d")); self.start.grid(row=0,column=5,padx=5)
-        ttk.Label(f,text="End").grid(row=0,column=6); self.end=ttk.Entry(f,width=12); self.end.insert(0,datetime.now().strftime("%Y-%m-%d")); self.end.grid(row=0,column=7,padx=5)
-        ttk.Label(f,text="Score").grid(row=1,column=0); self.bs=tk.IntVar(value=6); ttk.Spinbox(f,from_=1,to=7,textvariable=self.bs,width=5).grid(row=1,column=1)
-        ttk.Label(f,text="Target %").grid(row=1,column=2); self.target=tk.DoubleVar(value=2); ttk.Entry(f,textvariable=self.target,width=8).grid(row=1,column=3)
-        ttk.Label(f,text="Stop %").grid(row=1,column=4); self.stop=tk.DoubleVar(value=1); ttk.Entry(f,textvariable=self.stop,width=8).grid(row=1,column=5)
-        ttk.Label(f,text="Max bars").grid(row=1,column=6); self.bars=tk.IntVar(value=10); ttk.Entry(f,textvariable=self.bars,width=8).grid(row=1,column=7)
-        ttk.Button(f,text="Run Backtest",command=self.backtest).grid(row=0,column=8,rowspan=2,padx=10)
-        ttk.Button(f,text="Export CSV",command=self.export).grid(row=0,column=9,rowspan=2)
-        self.summary=ttk.Label(bt,text="No backtest run yet.",font=("Segoe UI",11,"bold")); self.summary.pack(fill="x",pady=8)
-        cols2=["Symbol","SignalTime","Entry","Exit","Return %","Outcome","Score","Bars"]
-        self.bt=ttk.Treeview(bt,columns=cols2,show="headings")
-        for x in cols2: self.bt.heading(x,text=x); self.bt.column(x,width=135,anchor="center")
-        self.bt.pack(fill="both",expand=True)
+        prog=tk.Frame(scan,bg="#131722",highlightbackground="#2a2e39",highlightthickness=1); prog.pack(fill="x",pady=(0,10))
+        self.scan_progress=ttk.Progressbar(prog,mode="determinate",maximum=100); self.scan_progress.pack(fill="x",padx=12,pady=(0,9))
+        self.progress_label=tk.Label(prog,text="READY — press Scan Market",bg="#131722",fg="#787b86",font=("Segoe UI",9)); self.progress_label.pack(anchor="w",padx=12,pady=8)
 
-        # Single-stock trade setup
-        sf=ttk.Frame(setup); sf.pack(fill="x",pady=5)
-        ttk.Label(sf,text="NSE Stock").pack(side="left")
-        self.setup_symbol=ttk.Entry(sf,width=16); self.setup_symbol.pack(side="left",padx=5)
-        ttk.Label(sf,text="Timeframe").pack(side="left",padx=(15,5))
-        self.setup_tf=ttk.Combobox(sf,values=["15 min","1 hour","1 day"],state="readonly",width=10)
-        self.setup_tf.set("1 day"); self.setup_tf.pack(side="left")
-        ttk.Button(sf,text="Calculate Entry & Exit",command=self.calculate_setup).pack(side="left",padx=12)
-        ttk.Button(sf,text="Use Selected Stock",command=self.use_selected_stock).pack(side="left")
+        body=tk.Frame(scan,bg="#0d1117"); body.pack(fill="both",expand=True)
+        left=tk.Frame(body,bg="#131722",highlightbackground="#2a2e39",highlightthickness=1); left.pack(side="left",fill="both",expand=True)
+        right=tk.Frame(body,bg="#1e222d",width=370,highlightbackground="#2a2e39",highlightthickness=1); right.pack(side="right",fill="y",padx=(10,0)); right.pack_propagate(False)
+        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Trend","MACD","Signal"]
+        self.tree=ttk.Treeview(left,columns=cols,show="headings")
+        for x in cols: self.tree.heading(x,text=x.upper()); self.tree.column(x,width=88,anchor="center")
+        self.tree.column("Symbol",width=105); self.tree.column("Score",width=72); self.tree.column("Signal",width=88)
+        self.tree.pack(fill="both",expand=True,padx=1,pady=1); self.tree.bind("<<TreeviewSelect>>",self.on_stock_select)
 
-        self.setup_summary=ttk.Label(setup,text="Select a stock and calculate its trade setup.",font=("Segoe UI",12,"bold"))
-        self.setup_summary.pack(fill="x",pady=15)
-        sg=ttk.Frame(setup); sg.pack(fill="x")
-        labels=[
-            ("Current Price","setup_price"),("Suggested Entry","setup_entry"),
-            ("Stop Loss","setup_stop"),("Target","setup_target"),
-            ("Risk / Share","setup_risk"),("Reward / Share","setup_reward"),
-            ("Risk : Reward","setup_rr"),("ATR(14)","setup_atr"),
-            ("20-Bar Breakout","setup_breakout"),("Scanner Score","setup_score"),
-            ("RSI","setup_rsi"),("ADX","setup_adx"),("Rel Volume","setup_relvol"),
-            ("Supertrend","setup_st"),("MACD","setup_macd")
-        ]
-        self.setup_vars={}
-        for i,(lab,key) in enumerate(labels):
-            r=i//4; c=(i%4)*2
-            ttk.Label(sg,text=lab).grid(row=r,column=c,sticky="w",padx=8,pady=8)
-            v=tk.StringVar(value="-"); self.setup_vars[key]=v
-            ttk.Label(sg,textvariable=v,font=("Segoe UI",10,"bold")).grid(row=r,column=c+1,sticky="w",padx=8,pady=8)
-        ttk.Label(setup,text="Method: long setup using current price as entry, 1.5x ATR stop and 3x ATR target (2R). These are algorithmic reference levels, not guaranteed prices.",wraplength=1100).pack(anchor="w",pady=18)
+        tk.Label(right,text="STOCK DETAILS",bg="#1e222d",fg="#f5f7fa",font=("Segoe UI",13,"bold")).pack(anchor="w",padx=18,pady=(18,2))
+        self.detail_symbol=tk.StringVar(value="Select a stock"); tk.Label(right,textvariable=self.detail_symbol,bg="#1e222d",fg="#26a69a",font=("Segoe UI",20,"bold")).pack(anchor="w",padx=18)
+        self.detail_signal=tk.StringVar(value="—"); tk.Label(right,textvariable=self.detail_signal,bg="#1e222d",fg="#f5f7fa",font=("Segoe UI",10,"bold")).pack(anchor="w",padx=18,pady=(2,12))
+        self.detail_vars={}
+        for lab,key in [("PRICE","price"),("SCORE","score"),("RSI 14","rsi"),("ADX 14","adx"),("RELATIVE VOLUME","relvol"),("EMA 20","ema20"),("EMA 50","ema50"),("VWAP","vwap"),("SUPERTREND","st"),("MACD","macd"),("MACD SIGNAL","macdsig")]:
+            row=tk.Frame(right,bg="#1e222d"); row.pack(fill="x",padx=18,pady=3)
+            tk.Label(row,text=lab,bg="#1e222d",fg="#787b86",font=("Segoe UI",9)).pack(side="left")
+            v=tk.StringVar(value="—"); self.detail_vars[key]=v
+            tk.Label(row,textvariable=v,bg="#1e222d",fg="#d1d4dc",font=("Segoe UI",10,"bold")).pack(side="right")
+        self.detail_setup=tk.StringVar(value="Trade setup will load after selecting a stock.")
+        tk.Label(right,textvariable=self.detail_setup,bg="#1e222d",fg="#787b86",wraplength=320,justify="left").pack(anchor="w",padx=18,pady=14)
 
+        self.show_page("scanner")
     def use_selected_stock(self):
         sel=self.tree.selection()
         if not sel:
