@@ -220,28 +220,53 @@ def fetch(sym,interval,period=None,start=None,end=None):
 
 def fetch_batch(symbols,interval,period):
     if not symbols: return {}
-    try:
-        raw=yf.download(tickers=[s+".NS" for s in symbols],interval=interval,period=period,
-                        auto_adjust=False,prepost=False,group_by="ticker",threads=True,progress=False,timeout=20)
-    except Exception as e:
-        log(f"batch download failed ({len(symbols)}): {e}"); return {}
+    tickers=[s+".NS" for s in symbols]
     out={}
-    if raw is None or raw.empty: return out
-    for sym in symbols:
-        ticker=sym+".NS"
+    try:
+        raw=yf.download(tickers=tickers,interval=interval,period=period,
+                        auto_adjust=False,prepost=False,group_by="ticker",
+                        threads=True,progress=False,timeout=25)
+    except Exception as e:
+        log(f"batch download failed ({len(symbols)}): {e}")
+        raw=None
+    if raw is not None and not raw.empty:
+        for sym,ticker in zip(symbols,tickers):
+            try:
+                if isinstance(raw.columns,pd.MultiIndex):
+                    lvl0={str(x).upper() for x in raw.columns.get_level_values(0)}
+                    lvl1={str(x).upper() for x in raw.columns.get_level_values(1)}
+                    if ticker.upper() in lvl0:
+                        d=raw[ticker].copy()
+                    elif ticker.upper() in lvl1:
+                        d=raw.xs(ticker,axis=1,level=1).copy()
+                    elif sym.upper() in lvl0:
+                        d=raw[sym].copy()
+                    elif sym.upper() in lvl1:
+                        d=raw.xs(sym,axis=1,level=1).copy()
+                    else:
+                        continue
+                else:
+                    if len(symbols)!=1: continue
+                    d=raw.copy()
+                cols=["Open","High","Low","Close","Volume"]
+                if all(x in d.columns for x in cols):
+                    d=d[cols].dropna()
+                    if not d.empty: out[sym]=d
+            except Exception as e:
+                log(f"extract {sym}: {e}")
+    missing=[s for s in symbols if s not in out]
+    if missing:
+        log(f"Batch data missing for {len(missing)}/{len(symbols)} symbols; retrying individually.")
+        def one(s):
+            d=fetch(s,interval,period)
+            return s,d
         try:
-            if isinstance(raw.columns,pd.MultiIndex):
-                if ticker in raw.columns.get_level_values(0): d=raw[ticker].copy()
-                elif ticker in raw.columns.get_level_values(1): d=raw.xs(ticker,axis=1,level=1).copy()
-                else: continue
-            else:
-                if len(symbols)!=1: continue
-                d=raw.copy()
-            cols=["Open","High","Low","Close","Volume"]
-            if all(x in d.columns for x in cols):
-                d=d[cols].dropna()
-                if not d.empty: out[sym]=d
-        except Exception as e: log(f"extract {sym}: {e}")
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                for s,d in pool.map(one,missing):
+                    if d is not None and not d.empty:
+                        out[s]=d
+        except Exception as e:
+            log(f"individual fallback failed: {e}")
     return out
 
 def build_signal_snapshot(sym,d,regime,daily_d=None):
@@ -302,27 +327,21 @@ def trade_setup(sym, interval):
     }
 
 def dashboard_snapshot(sym, interval):
-    """Build a paper-trading dashboard snapshot from the latest Yahoo Finance bars."""
+    """Build a dashboard snapshot using the same signal engine as Live Scanner."""
     period = {"15 min":"60d","1 hour":"730d","1 day":"1y"}[interval]
     yf_interval = {"15 min":"15m","1 hour":"60m","1 day":"1d"}[interval]
     d = fetch(sym, yf_interval, period=period)
     if d.empty or len(d) < 60: return None
-    d = calc(d); x = d.iloc[-1]
-    regime=get_market_regime()
-    signal=evaluate_signal(
-        price=float(x.Close), ema20=float(x.EMA20), ema50=float(x.EMA50),
-        vwap=float(x.VWAP), rsi14=float(x.RSI14), adx14=float(x.ADX14),
-        relative_volume=float(x.RelVol), supertrend_bullish=bool(x.STDir==1),
-        macd=float(x.MACD), macd_signal=float(x.MACDSignal), regime=regime,
-    )
-    score=signal.composite_score
-    bullish=signal.qualifies
-    entry=float(x.Close); atrv=float(atr(d,14).iloc[-1])
+    daily=fetch(sym,"1d",period="60d")
+    snap=build_signal_snapshot(sym.upper().strip(),d,get_market_regime(),daily)
+    if not snap: return None
+    x=snap["latest"]; cd=snap["data"]; entry=float(x.Close); atrv=float(atr(cd,14).iloc[-1])
+    score=snap["score"]; bullish=bool(x.STDir==1)
     return {"symbol":sym,"price":entry,"score":score,
-            "signal":"BUY" if score>=6 and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),
+            "signal":"BUY" if snap["signal"].qualifies and snap["liquid"] else ("EXIT" if score<40 or not bullish else "WATCH"),
             "rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),
             "st":"BULLISH" if bullish else "BEARISH","entry":entry,
-            "stop":max(.01,entry-1.5*atrv),"target":entry+3*atrv,"time":str(d.index[-1])}
+            "stop":max(.01,entry-1.5*atrv),"target":entry+3*atrv,"time":str(cd.index[-1])}
 
 def check_update():
     with urllib.request.urlopen(UPDATE_MANIFEST_URL,timeout=10) as r:
@@ -723,20 +742,27 @@ class App(tk.Tk):
             symbols=get_index_symbols(universe)
             interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[tf]
             period={"15 min":"60d","1 hour":"730d","1 day":"1y"}[tf]
+            regime=get_market_regime()
             results=[]
             for i in range(0,len(symbols),75):
                 if not getattr(self,"dash_running",False): break
-                data_map=fetch_batch(symbols[i:i+75],interval,period)
+                chunk=symbols[i:i+75]
+                data_map=fetch_batch(chunk,interval,period)
+                daily_map=fetch_batch(chunk,"1d","60d")
                 for sym,d in data_map.items():
                     try:
-                        if len(d)<60: continue
-                        cd=calc(d); x=cd.iloc[-1]
-                        cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
-                        score=int(sum(bool(v) for v in cond)); bullish=bool(x.STDir==1)
-                        atrv=float(atr(cd,14).iloc[-1]); price=float(x.Close)
-                        results.append({"symbol":sym,"price":price,"score":score,"signal":"BUY" if score>=minimum and bullish else ("EXIT" if score<=3 or not bullish else "WATCH"),"rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),"st":"BULLISH" if bullish else "BEARISH","entry":price,"stop":max(.01,price-1.5*atrv),"target":price+3*atrv,"time":str(cd.index[-1])})
+                        snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
+                        if not snap: continue
+                        x=snap["latest"]; cd=snap["data"]; score=snap["score"]
+                        price=float(x.Close); atrv=float(atr(cd,14).iloc[-1])
+                        signal_name="BUY" if snap["signal"].qualifies and snap["liquid"] and score>=minimum else ("EXIT" if score<40 or x.STDir!=1 else "WATCH")
+                        results.append({"symbol":sym,"price":price,"score":score,"signal":signal_name,
+                                        "rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),
+                                        "st":"BULLISH" if x.STDir==1 else "BEARISH","entry":price,
+                                        "stop":max(.01,price-1.5*atrv),"target":price+3*atrv,
+                                        "time":str(cd.index[-1])})
                     except Exception as e: log(f"dashboard {sym}: {e}")
-            results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="EXIT" else 2,-r["score"],r["symbol"]))
+            results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="WATCH" else 2,-r["score"],r["symbol"]))
             self.q.put(("dashboard",results))
         except Exception as e:
             log("dashboard_worker: "+traceback.format_exc()); self.q.put(("msg",f"Dashboard refresh failed:\n{e}"))
