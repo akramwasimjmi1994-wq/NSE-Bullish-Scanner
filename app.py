@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.5"
+APP_VERSION = "3.0.6"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -138,6 +138,8 @@ def calc(df):
     d["VWAP"]=vwap(d); d["RSI14"]=rsi(d.Close)
     d["ADX14"]=adx(d); d["RelVol"]=d.Volume/d.Volume.rolling(20).mean()
     d["Supertrend"],d["STDir"]=supertrend(d)
+    d["MACD"]=ema(d.Close,12)-ema(d.Close,26)
+    d["MACDSignal"]=ema(d["MACD"],9)
     return d
 
 def fetch(sym,interval,period=None,start=None,end=None):
@@ -183,9 +185,9 @@ def scan_one(sym,d):
     try:
         d=calc(d); x=d.iloc[-1]
         cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,
-              x.ADX14>=20,x.RelVol>=1.2,x.STDir==1]
+              x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
         sc=sum(bool(v) for v in cond)
-        names=["EMA","VWAP","RSI","ADX","RelVol","Supertrend"]
+        names=["EMA","VWAP","RSI","ADX","RelVol","Supertrend","MACD"]
         row=(sym,f"{x.Close:.2f}",sc,f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
              f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}",
              "BULLISH" if x.STDir==1 else "BEARISH",", ".join(n for n,v in zip(names,cond) if v))
@@ -259,20 +261,20 @@ class App(tk.Tk):
         self.tf.set("15 min"); self.tf.pack(side="left",padx=5)
         ttk.Button(c,text="Refresh NSE List",command=lambda:self.refresh_symbols()).pack(side="left",padx=5)
         ttk.Label(c,text="Minimum confirmations").pack(side="left",padx=(15,5))
-        self.score=tk.IntVar(value=5); ttk.Spinbox(c,from_=1,to=6,textvariable=self.score,width=5).pack(side="left")
+        self.score=tk.IntVar(value=6); ttk.Spinbox(c,from_=1,to=7,textvariable=self.score,width=5).pack(side="left")
         ttk.Button(c,text="Scan All NSE Stocks",command=self.scan).pack(side="left",padx=10)
         self.status=ttk.Label(c,text="Ready"); self.status.pack(side="right")
-        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","Signal","Confirmations"]
+        cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","MACD","Signal","Confirmations"]
         self.tree=ttk.Treeview(scan,columns=cols,show="headings")
         for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105)
-        self.tree.column("Signal",width=105); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
+        self.tree.column("Signal",width=105); self.tree.column("MACD",width=110); self.tree.column("Confirmations",width=270); self.tree.pack(fill="both",expand=True,pady=8)
         self.tree.bind("<Double-1>", lambda e:self.use_selected_stock())
 
         f=ttk.Frame(bt); f.pack(fill="x")
         ttk.Label(f,text="Timeframe").grid(row=0,column=0); self.btf=ttk.Combobox(f,values=["15 min","1 hour","1 day"],state="readonly",width=10); self.btf.set("1 day"); self.btf.grid(row=0,column=1,padx=5)
         ttk.Label(f,text="Start").grid(row=0,column=2); self.start=ttk.Entry(f,width=12); self.start.insert(0,(datetime.now()-timedelta(days=365)).strftime("%Y-%m-%d")); self.start.grid(row=0,column=3,padx=5)
         ttk.Label(f,text="End").grid(row=0,column=4); self.end=ttk.Entry(f,width=12); self.end.insert(0,datetime.now().strftime("%Y-%m-%d")); self.end.grid(row=0,column=5,padx=5)
-        ttk.Label(f,text="Score").grid(row=1,column=0); self.bs=tk.IntVar(value=5); ttk.Spinbox(f,from_=1,to=6,textvariable=self.bs,width=5).grid(row=1,column=1)
+        ttk.Label(f,text="Score").grid(row=1,column=0); self.bs=tk.IntVar(value=6); ttk.Spinbox(f,from_=1,to=7,textvariable=self.bs,width=5).grid(row=1,column=1)
         ttk.Label(f,text="Target %").grid(row=1,column=2); self.target=tk.DoubleVar(value=2); ttk.Entry(f,textvariable=self.target,width=8).grid(row=1,column=3)
         ttk.Label(f,text="Stop %").grid(row=1,column=4); self.stop=tk.DoubleVar(value=1); ttk.Entry(f,textvariable=self.stop,width=8).grid(row=1,column=5)
         ttk.Label(f,text="Max bars").grid(row=1,column=6); self.bars=tk.IntVar(value=10); ttk.Entry(f,textvariable=self.bars,width=8).grid(row=1,column=7)
@@ -357,10 +359,10 @@ class App(tk.Tk):
             interval,period={"15 min":("15m","60d"),"1 hour":("60m","730d"),"1 day":("1d","10y")}[self.tf.get()]
             symbols=get_nse_symbols()
             self.q.put(("status",f"Loaded {len(symbols)} NSE equities. Downloading market data in parallel..."))
-            batch_size=50
+            batch_size=100
             batches=[symbols[i:i+batch_size] for i in range(0,len(symbols),batch_size)]
             confirmed=[]; candidates=[]; completed=0; minimum=self.score.get()
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=8) as pool:
                 futures=[pool.submit(fetch_batch,b,interval,period) for b in batches]
                 for fut in as_completed(futures):
                     if self.stop_flag: break
@@ -371,7 +373,7 @@ class App(tk.Tk):
                         sc,bullish,row=result
                         if sc>=minimum:
                             confirmed.append((sc,sym,row))
-                        elif bullish and sc>=max(4,minimum-1):
+                        elif bullish and sc>=max(5,minimum-1):
                             candidates.append((sc,sym,row))
                     completed+=len(data_map)
                     self.q.put(("status",f"Downloaded/analyzed {completed}/{len(symbols)} stocks..."))
@@ -404,7 +406,7 @@ class App(tk.Tk):
                 d=calc(fetch(s,interval,start=self.start.get(),end=self.end.get()))
                 for i in range(60,len(d)-1):
                     x=d.iloc[i]
-                    cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1]
+                    cond=[x.Close>x.EMA20 and x.EMA20>x.EMA50,x.Close>x.VWAP,x.RSI14>50,x.ADX14>=20,x.RelVol>=1.2,x.STDir==1,x.MACD>x.MACDSignal]
                     if sum(bool(v) for v in cond)<self.bs.get(): continue
                     entry=float(d.Open.iloc[i+1]); target=entry*(1+self.target.get()/100); stop=entry*(1-self.stop.get()/100)
                     last=min(len(d)-1,i+1+self.bars.get()); outcome="TIME"; exitp=float(d.Close.iloc[last]); exit_i=last
