@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.0.9"
+APP_VERSION = "3.1.0"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -270,18 +270,47 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"NSE Bullish Scanner v{APP_VERSION}")
-        self.geometry("1400x800")
+        self.geometry("1500x900")
+        self.minsize(1200,700)
         self.protocol("WM_DELETE_WINDOW",self.destroy)
         self.q=queue.Queue(); self.stop_flag=False; self.trades=[]
+        self.setup_styles()
         self.make_ui(); self.after(200,self.poll)
         log("Application started.")
 
+
+    def setup_styles(self):
+        style=ttk.Style(self)
+        try: style.theme_use("clam")
+        except Exception: pass
+        self.configure(bg="#0b1220")
+        style.configure(".",font=("Segoe UI",10),background="#0b1220",foreground="#dbe4f0")
+        style.configure("TFrame",background="#0b1220")
+        style.configure("Header.TFrame",background="#0f1a2b")
+        style.configure("Header.TLabel",background="#0f1a2b",foreground="#f8fafc")
+        style.configure("Sub.TLabel",background="#0f1a2b",foreground="#94a3b8")
+        style.configure("TLabel",background="#0b1220",foreground="#cbd5e1")
+        style.configure("TButton",background="#1d4ed8",foreground="#ffffff",padding=(12,7))
+        style.map("TButton",background=[("active","#2563eb")])
+        style.configure("Accent.TButton",background="#16a34a",foreground="#ffffff",padding=(14,8),font=("Segoe UI Semibold",10))
+        style.map("Accent.TButton",background=[("active","#22c55e")])
+        style.configure("TCombobox",fieldbackground="#111b2e",background="#111b2e",foreground="#e2e8f0")
+        style.configure("TEntry",fieldbackground="#111b2e",foreground="#e2e8f0",insertcolor="#ffffff")
+        style.configure("TSpinbox",fieldbackground="#111b2e",foreground="#e2e8f0")
+        style.configure("TNotebook",background="#0b1220",borderwidth=0)
+        style.configure("TNotebook.Tab",background="#111b2e",foreground="#94a3b8",padding=(18,9))
+        style.map("TNotebook.Tab",background=[("selected","#1d4ed8")],foreground=[("selected","#ffffff")])
+        style.configure("Treeview",background="#0f172a",fieldbackground="#0f172a",foreground="#dbe4f0",rowheight=30)
+        style.configure("Treeview.Heading",background="#17233a",foreground="#e2e8f0",relief="flat",padding=(8,8))
+        style.map("Treeview",background=[("selected","#1d4ed8")],foreground=[("selected","#ffffff")])
+        style.configure("Status.TLabel",background="#111b2e",foreground="#93c5fd",padding=(10,7))
+
     def make_ui(self):
-        top=ttk.Frame(self,padding=8); top.pack(fill="x")
-        ttk.Label(top,text="NSE Bullish Scanner",font=("Segoe UI",18,"bold")).pack(side="left")
-        ttk.Label(top,text=f"v{APP_VERSION}").pack(side="left",padx=10)
+        top=ttk.Frame(self,padding=(18,14),style="Header.TFrame"); top.pack(fill="x")
+        ttk.Label(top,text="NSE BULLISH SCANNER",font=("Segoe UI",18,"bold"),style="Header.TLabel").pack(side="left")
+        ttk.Label(top,text=f"v{APP_VERSION}",style="Sub.TLabel").pack(side="left",padx=12)
         ttk.Button(top,text="Check for Updates",command=self.update).pack(side="right")
-        nb=ttk.Notebook(self); nb.pack(fill="both",expand=True)
+        nb=ttk.Notebook(self,padding=(10,8)); nb.pack(fill="both",expand=True)
         scan=ttk.Frame(nb,padding=8); bt=ttk.Frame(nb,padding=8); setup=ttk.Frame(nb,padding=8)
         nb.add(scan,text="Live Scanner"); nb.add(bt,text="Backtest"); nb.add(setup,text="Trade Setup")
 
@@ -295,8 +324,8 @@ class App(tk.Tk):
         ttk.Button(c,text="Refresh List",command=self.refresh_universe).pack(side="left",padx=5)
         ttk.Label(c,text="Minimum confirmations").pack(side="left",padx=(15,5))
         self.score=tk.IntVar(value=6); ttk.Spinbox(c,from_=1,to=7,textvariable=self.score,width=5).pack(side="left")
-        ttk.Button(c,text="Scan Selected Stocks",command=self.scan).pack(side="left",padx=10)
-        self.status=ttk.Label(c,text="Ready"); self.status.pack(side="right")
+        ttk.Button(c,text="⚡ Scan Selected Stocks",command=self.scan,style="Accent.TButton").pack(side="left",padx=10)
+        self.status=ttk.Label(c,text="● Ready",style="Status.TLabel"); self.status.pack(side="right")
         cols=["Symbol","Price","Score","RSI","ADX","RelVol","EMA20","EMA50","VWAP","Supertrend","MACD","Signal","Confirmations"]
         self.tree=ttk.Treeview(scan,columns=cols,show="headings")
         for x in cols: self.tree.heading(x,text=x); self.tree.column(x,width=105)
