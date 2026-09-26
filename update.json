@@ -1,6 +1,6 @@
 {
-  "version": "3.4.0",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.0/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.4.1",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.1/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Signal Engine v2 with composite 0-100 scoring, liquidity filtering, market-regime filtering and updated historical backtesting."
+  "notes": "Fix startup crash from missing page builders; retains Signal Engine v2 composite scoring and backtest integration."
 }
