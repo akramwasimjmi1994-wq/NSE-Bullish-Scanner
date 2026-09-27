@@ -64,7 +64,24 @@ def get_market_regime(index_symbol: str = "^NSEI") -> MarketRegime:
     Call this ONCE per scan cycle, not per stock.
     """
     try:
-        data = yf.Ticker(index_symbol).history(period="6mo", interval="1d")
+        data = yf.download(
+            tickers=[index_symbol],
+            period="6mo",
+            interval="1d",
+            auto_adjust=False,
+            prepost=False,
+            group_by="ticker",
+            threads=False,
+            progress=False,
+            timeout=12,
+        )
+        if data is None or data.empty:
+            return MarketRegime(True, 0, 0, "Index data unavailable — regime filter skipped")
+        if isinstance(data.columns, __import__("pandas").MultiIndex):
+            try:
+                data = data[index_symbol].copy()
+            except Exception:
+                data = data.xs(index_symbol, axis=1, level=1).copy()
         if data.empty or len(data) < 55:
             return MarketRegime(True, 0, 0, "Index data unavailable — regime filter skipped")
 
