@@ -1,6 +1,6 @@
 {
-  "version": "3.4.5",
-  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.5/NSE_Bullish_Scanner_Update.zip",
+  "version": "3.4.6",
+  "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.6/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "notes": "Fix scanner freeze at 0/N by using bounded Yahoo requests, smaller batches, and progress updates before slow data preparation."
+  "notes": "Professional trading-terminal UI refresh, unified colors, typography, spacing, and market context."
 }
