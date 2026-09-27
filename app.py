@@ -997,6 +997,11 @@ class App(tk.Tk):
             while True:
                 typ,data=self.q.get_nowait()
                 if typ in ("row","candidate"): self.tree.insert("", "end", values=data)
+                elif typ=="scan_rows":
+                    for row in data: self.tree.insert("", "end", values=row)
+                elif typ=="scan_finalize":
+                    for item in self.tree.get_children(): self.tree.delete(item)
+                    for row in data: self.tree.insert("", "end", values=row)
                 elif typ=="status": self.status.config(text=data)
                 elif typ=="scan_total":
                     self.scan_progress["maximum"]=max(1,data); self.scan_progress["value"]=0; self.progress_label.config(text=f"0 / {data} stocks scanned")
