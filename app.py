@@ -299,7 +299,7 @@ def build_signal_snapshot(sym,d,regime,daily_d=None):
         sc=signal.composite_score
         qualified=bool(signal.qualifies and liquid)
         status="BUY" if qualified else ("WATCH" if liquid else "LOW LIQUIDITY")
-        row=(sym,f"{x.Close:.2f}",self._score_badge(sc),f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
+        row=(sym,f"{x.Close:.2f}",f"{int(sc)}/100",f"{x.RSI14:.1f}",f"{x.ADX14:.1f}",f"{x.RelVol:.2f}",
              f"{x.EMA20:.2f}",f"{x.EMA50:.2f}",f"{x.VWAP:.2f}",
              "BULLISH" if x.STDir==1 else "BEARISH",f"{x.MACD:.3f}",status)
         return {
@@ -896,6 +896,7 @@ class App(tk.Tk):
                 chunk=symbols[i:i+50]
                 data_map=fetch_batch(chunk,interval,period)
                 daily_map=fetch_batch(chunk,"1d","60d")
+                chunk_results=[]
                 for sym,d in data_map.items():
                     try:
                         snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
@@ -910,6 +911,8 @@ class App(tk.Tk):
                                         "time":str(cd.index[-1])}
                         results.append(item); chunk_results.append(item)
                     except Exception as e: log(f"dashboard {sym}: {e}")
+                if chunk_results:
+                    self.q.put(("dashboard_chunk",chunk_results))
             results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="WATCH" else 2,-r["score"],r["symbol"]))
             self.q.put(("dashboard",results))
         except Exception as e:
