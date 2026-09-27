@@ -1039,9 +1039,9 @@ class App(tk.Tk):
 
             buys=sum(1 for sc,_,_,q,l in rows if q and l and sc>=minimum)
             liquid_count=sum(1 for _,_,_,_,l in rows if l)
+            self.q.put(("market_regime",regime))
             if rows:
-                self.q.put(("market_regime",regime))
-            self.q.put(("status",f"Scan complete — {len(rows)} stocks with valid data | {buys} BUY candidates | {liquid_count} passed liquidity filter."))
+                self.q.put(("status",f"Scan complete — {len(rows)} stocks with valid data | {buys} BUY candidates | {liquid_count} passed liquidity filter."))
             else:
                 self.q.put(("status","Scan complete — no stock returned usable market data."))
         except Exception as e:
