@@ -1,7 +1,7 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import threading, queue, os, sys, json, traceback, subprocess, tempfile, urllib.request, hashlib, io
+import threading, queue, os, sys, json, traceback, subprocess, tempfile, urllib.request, urllib.parse, hashlib, io
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -788,9 +788,9 @@ class App(tk.Tk):
 
     def dashboard_render_chunk(self,results):
         for r in results:
-            vals=(r["symbol"],f"{r["price"]:.2f}",self._score_badge(r["score"]),r["signal"],
-                  f"{r["rsi"]:.1f}",f"{r["adx"]:.1f}",f"{r["relvol"]:.2f}",r["st"],
-                  f"{r["entry"]:.2f}",f"{r["stop"]:.2f}",f"{r["target"]:.2f}",r["time"])
+            vals=(r["symbol"],f"{r['price']:.2f}",self._score_badge(r["score"]),r["signal"],
+                  f"{r['rsi']:.1f}",f"{r['adx']:.1f}",f"{r['relvol']:.2f}",r["st"],
+                  f"{r['entry']:.2f}",f"{r['stop']:.2f}",f"{r['target']:.2f}",r["time"])
             self._insert_tree_row(self.dash_tree,vals,signal_index=3)
 
     def dashboard_render(self,results):
