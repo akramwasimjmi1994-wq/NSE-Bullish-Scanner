@@ -7,6 +7,9 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,9 +37,19 @@ jobs:
         with:
           name: NSE-Bullish-Scanner-Android-build-log
           path: android/build.log
-      - name: Upload APK
+      - name: Prepare APK
+        if: success()
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/NSE-Bullish-Scanner-Android.apk
+      - name: Upload APK artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: NSE-Bullish-Scanner-Android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/NSE-Bullish-Scanner-Android.apk
+      - name: Publish Android release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-v1.0.1 --yes || true
+          gh release create android-v1.0.1 app/build/outputs/apk/debug/NSE-Bullish-Scanner-Android.apk --title "NSE Bullish Scanner Android v1.0.1" --notes "Android scanner with Market Scanner, Stock Check, and in-app update check."
