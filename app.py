@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "3.4.5"
+APP_VERSION = "3.4.6"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/main/update.json"
 APP_NAME = "NSE_Bullish_Scanner.exe"
 
@@ -206,91 +206,83 @@ def fetch_historical_market_regime(start,end):
         log(f"historical regime fetch failed: {e}")
         return pd.DataFrame()
 
-def fetch(sym,interval,period=None,start=None,end=None):
-    """Fetch one NSE symbol with a hard network timeout.
-    Uses yf.download rather than Ticker.history so a stalled Yahoo request
-    cannot leave a scanner worker waiting indefinitely.
-    """
+def _chart_fetch(ticker, interval, period=None, start=None, end=None):
+    """Fast, bounded Yahoo Chart API fetch. This avoids yfinance's internal
+    request/thread behavior that can leave the Tkinter worker waiting."""
+    import time as _time
     try:
-        ticker=sym.strip().upper()+".NS"
-        kwargs=dict(
-            tickers=[ticker], interval=interval, auto_adjust=False,
-            prepost=False, group_by="ticker", threads=False,
-            progress=False, timeout=12,
-        )
+        if start:
+            p1=int(pd.Timestamp(start).timestamp())
+            p2=int(pd.Timestamp(end).timestamp()) if end else int(_time.time())
+            range_part=f"period1={p1}&period2={p2}"
+        else:
+            range_part=f"range={period}"
+        url=(f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(ticker)}"
+             f"?{range_part}&interval={interval}&events=history&includeAdjustedClose=true")
+        req=urllib.request.Request(url,headers={
+            "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/149 Safari/537.36",
+            "Accept":"application/json,text/plain,*/*",
+        })
+        with urllib.request.urlopen(req,timeout=12) as r:
+            obj=json.loads(r.read().decode("utf-8"))
+        result=(obj.get("chart") or {}).get("result") or []
+        if not result: return pd.DataFrame()
+        res=result[0]; ts=res.get("timestamp") or []
+        q=((res.get("indicators") or {}).get("quote") or [{}])[0]
+        if not ts: return pd.DataFrame()
+        df=pd.DataFrame({
+            "Open":q.get("open",[]),"High":q.get("high",[]),
+            "Low":q.get("low",[]),"Close":q.get("close",[]),
+            "Volume":q.get("volume",[]),
+        },index=pd.to_datetime(ts,unit="s",utc=True).tz_convert("Asia/Kolkata").tz_localize(None))
+        return df[["Open","High","Low","Close","Volume"]].apply(pd.to_numeric,errors="coerce").dropna()
+    except Exception as ex:
+        log(f"chart fetch {ticker}: {ex}")
+        return pd.DataFrame()
+
+def fetch(sym,interval,period=None,start=None,end=None):
+    ticker=sym.strip().upper()+".NS"
+    d=_chart_fetch(ticker,interval,period,start,end)
+    if not d.empty: return d
+    # Keep yfinance as a secondary fallback.
+    try:
+        kwargs=dict(tickers=[ticker],interval=interval,auto_adjust=False,
+                    prepost=False,group_by="ticker",threads=False,
+                    progress=False,timeout=12)
         if start:
             kwargs["start"]=start; kwargs["end"]=end
         else:
             kwargs["period"]=period
         raw=yf.download(**kwargs)
-        if raw is None or raw.empty:
-            return pd.DataFrame()
+        if raw is None or raw.empty: return pd.DataFrame()
         if isinstance(raw.columns,pd.MultiIndex):
-            levels=[set(str(x).upper() for x in raw.columns.get_level_values(i)) for i in range(raw.columns.nlevels)]
-            if ticker.upper() in levels[0]:
-                d=raw[ticker].copy()
-            elif ticker.upper() in levels[-1]:
+            try: d=raw[ticker].copy()
+            except Exception:
                 d=raw.xs(ticker,axis=1,level=raw.columns.nlevels-1).copy()
-            else:
-                d=raw.copy()
-                d.columns=d.columns.get_level_values(-1)
-        else:
-            d=raw.copy()
+        else: d=raw.copy()
         cols=["Open","High","Low","Close","Volume"]
         return d[cols].dropna() if all(x in d.columns for x in cols) else pd.DataFrame()
-    except Exception as e:
-        log(f"fetch {sym}: {e}"); return pd.DataFrame()
+    except Exception as ex:
+        log(f"fetch {sym}: {ex}")
+        return pd.DataFrame()
 
 def fetch_batch(symbols,interval,period):
     if not symbols: return {}
-    tickers=[s+".NS" for s in symbols]
     out={}
+    # Fetch individually through the bounded Chart API in parallel. This is
+    # more reliable than one large Yahoo multi-ticker request and still keeps
+    # the scanner fast enough for NSE index-sized universes.
+    def one(s):
+        return s,fetch(s,interval,period)
     try:
-        raw=yf.download(tickers=tickers,interval=interval,period=period,
-                        auto_adjust=False,prepost=False,group_by="ticker",
-                        threads=True,progress=False,timeout=15)
-    except Exception as e:
-        log(f"batch download failed ({len(symbols)}): {e}")
-        raw=None
-    if raw is not None and not raw.empty:
-        for sym,ticker in zip(symbols,tickers):
-            try:
-                if isinstance(raw.columns,pd.MultiIndex):
-                    lvl0={str(x).upper() for x in raw.columns.get_level_values(0)}
-                    lvl1={str(x).upper() for x in raw.columns.get_level_values(1)}
-                    if ticker.upper() in lvl0:
-                        d=raw[ticker].copy()
-                    elif ticker.upper() in lvl1:
-                        d=raw.xs(ticker,axis=1,level=1).copy()
-                    elif sym.upper() in lvl0:
-                        d=raw[sym].copy()
-                    elif sym.upper() in lvl1:
-                        d=raw.xs(sym,axis=1,level=1).copy()
-                    else:
-                        continue
-                else:
-                    if len(symbols)!=1: continue
-                    d=raw.copy()
-                cols=["Open","High","Low","Close","Volume"]
-                if all(x in d.columns for x in cols):
-                    d=d[cols].dropna()
-                    if not d.empty: out[sym]=d
-            except Exception as e:
-                log(f"extract {sym}: {e}")
-    missing=[s for s in symbols if s not in out]
-    if missing:
-        log(f"Batch data missing for {len(missing)}/{len(symbols)} symbols; retrying individually.")
-        def one(s):
-            d=fetch(s,interval,period)
-            return s,d
-        try:
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                for s,d in pool.map(one,missing):
-                    if d is not None and not d.empty:
-                        out[s]=d
-        except Exception as e:
-            log(f"individual fallback failed: {e}")
+        with ThreadPoolExecutor(max_workers=min(8,len(symbols))) as pool:
+            for s,d in pool.map(one,symbols):
+                if d is not None and not d.empty:
+                    out[s]=d
+    except Exception as ex:
+        log(f"parallel batch failed: {ex}")
     return out
+
 
 def build_signal_snapshot(sym,d,regime,daily_d=None):
     if d is None or len(d)<60: return None
@@ -772,6 +764,7 @@ class App(tk.Tk):
                 batch=symbols[i:i+75]
                 data_map=fetch_batch(batch,interval,period)
                 daily_map=fetch_batch(batch,"1d","60d")
+                chunk_results=[]
                 for sym,d in data_map.items():
                     try:
                         snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
@@ -786,10 +779,19 @@ class App(tk.Tk):
                                         "entry":price,"stop":max(.01,price-1.5*atrv),"target":price+3*atrv,
                                         "time":str(cd.index[-1]),"liquid":liquid})
                     except Exception as e: log(f"dashboard {sym}: {e}")
+                if chunk_results:
+                    self.q.put(("dashboard_chunk",chunk_results))
             results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1,-r["score"],r["symbol"]))
             self.q.put(("dashboard",results))
         except Exception as e:
             log("dashboard_worker: "+traceback.format_exc()); self.q.put(("msg",f"Dashboard refresh failed:\n{e}"))
+
+    def dashboard_render_chunk(self,results):
+        for r in results:
+            vals=(r["symbol"],f"{r["price"]:.2f}",self._score_badge(r["score"]),r["signal"],
+                  f"{r["rsi"]:.1f}",f"{r["adx"]:.1f}",f"{r["relvol"]:.2f}",r["st"],
+                  f"{r["entry"]:.2f}",f"{r["stop"]:.2f}",f"{r["target"]:.2f}",r["time"])
+            self._insert_tree_row(self.dash_tree,vals,signal_index=3)
 
     def dashboard_render(self,results):
         for item in self.dash_tree.get_children(): self.dash_tree.delete(item)
@@ -901,11 +903,12 @@ class App(tk.Tk):
                         x=snap["latest"]; cd=snap["data"]; score=snap["score"]
                         price=float(x.Close); atrv=float(atr(cd,14).iloc[-1])
                         signal_name="BUY" if snap["signal"].qualifies and snap["liquid"] and score>=minimum else ("EXIT" if score<40 or x.STDir!=1 else "WATCH")
-                        results.append({"symbol":sym,"price":price,"score":score,"signal":signal_name,
+                        item={"symbol":sym,"price":price,"score":score,"signal":signal_name,
                                         "rsi":float(x.RSI14),"adx":float(x.ADX14),"relvol":float(x.RelVol),
                                         "st":"BULLISH" if x.STDir==1 else "BEARISH","entry":price,
                                         "stop":max(.01,price-1.5*atrv),"target":price+3*atrv,
-                                        "time":str(cd.index[-1])})
+                                        "time":str(cd.index[-1])}
+                        results.append(item); chunk_results.append(item)
                     except Exception as e: log(f"dashboard {sym}: {e}")
             results.sort(key=lambda r:(0 if r["signal"]=="BUY" else 1 if r["signal"]=="WATCH" else 2,-r["score"],r["symbol"]))
             self.q.put(("dashboard",results))
@@ -992,7 +995,7 @@ class App(tk.Tk):
             self.q.put(("market_regime",regime))
             self.q.put(("status",f"Market data connected. Scanning {total} stocks..."))
 
-            batch_size=50
+            batch_size=25
             batches=[symbols[i:i+batch_size] for i in range(0,total,batch_size)]
             rows=[]
             completed=0
@@ -1091,6 +1094,7 @@ class App(tk.Tk):
                             if float(d.High.iloc[j])>=target: exitp=target; outcome="WIN"; exit_i=j; break
                         ret=(exitp/entry-1)*100
                         self.trades.append({"Symbol":sym,"SignalTime":str(d.index[i]),"Entry":entry,"Exit":exitp,"ReturnPct":ret,"Outcome":outcome,"CompositeScore":score,"BarsHeld":exit_i-(i+1)})
+                        self.q.put(("backtest_trade",self.trades[-1]))
                 except Exception as e: log(f"backtest {sym}: {e}")
             self.q.put(("done",self.trades)); self.q.put(("status",f"Backtest complete - {len(self.trades)} trades from {universe}."))
         except Exception as e:
@@ -1184,6 +1188,8 @@ class App(tk.Tk):
                 elif typ=="update_error":
                     self.status.config(text="● UPDATE CHECK FAILED")
                     messagebox.showerror("NSE Bullish Scanner",data)
+                elif typ=="dashboard_chunk":
+                    self.dashboard_render_chunk(data)
                 elif typ=="dashboard":
                     self.dashboard_render(data)
                 elif typ=="detail":
@@ -1205,6 +1211,11 @@ class App(tk.Tk):
                     for k,v in vals.items(): self.setup_vars[k].set(v)
                     self.setup_cards["setup_stop"].configure(highlightbackground=self.BEAR)
                     self.setup_cards["setup_target"].configure(highlightbackground=self.BULL)
+                elif typ=="backtest_trade":
+                    r=data
+                    vals=(r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',f'{r["Exit"]:.2f}',
+                          f'{r["ReturnPct"]:.2f}%',r["Outcome"],self._score_badge(r["CompositeScore"]),r["BarsHeld"])
+                    self._insert_tree_row(self.bt_tree,vals,signal_index=5)
                 elif typ=="done":
                     self.trades=data
                     if data:
