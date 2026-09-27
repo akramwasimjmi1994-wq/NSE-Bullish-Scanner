@@ -8,6 +8,8 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
+data class CheckResult(val available:Boolean,val message:String,val url:String?)
+
 class YahooClient {
     private val http=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(12,TimeUnit.SECONDS).build()
     suspend fun scan(symbol:String,timeframe:String):StockRow?=withContext(Dispatchers.IO){
@@ -30,6 +32,16 @@ class YahooClient {
             StockRow(symbol,c,score.toInt(),r,a,rv,if(st)"BULLISH"else"BEARISH",if(qualifies&&score>=70)"BUY"else"WATCH")
         }.getOrNull()
     }
+    suspend fun checkAndroidUpdate(manifestUrl:String,currentVersion:String):CheckResult=withContext(Dispatchers.IO){
+        val req=Request.Builder().url(manifestUrl).header("User-Agent","NSE-Bullish-Scanner-Android").build()
+        val body=http.newCall(req).execute().use{it.body?.string() ?: throw IllegalStateException("Empty update manifest")}
+        val j=JSONObject(body);val latest=j.optString("android_version",currentVersion);val url=j.optString("android_url","")
+        val a=latest.split(".").map{it.toIntOrNull()?:0};val b=currentVersion.split(".").map{it.toIntOrNull()?:0}
+        var newer=false
+        for(i in 0 until maxOf(a.size,b.size)){val x=a.getOrElse(i){0};val y=b.getOrElse(i){0};if(x>y){newer=true;break};if(x<y)break}
+        if(newer && url.isNotBlank()) CheckResult(true,"Update available: v"+latest,url) else CheckResult(false,"You are using the latest Android version.",null)
+    }
+
     private fun series(q:JSONObject,key:String)=buildList<Double>{val a=q.optJSONArray(key)?:return@buildList;for(i in 0 until a.length())if(!a.isNull(i))add(a.getDouble(i))}
     private fun ema(x:List<Double>,n:Int):Double{var e=x.first();val k=2.0/(n+1);for(i in 1 until x.size)e=x[i]*k+e*(1-k);return e}
     private fun rsi(x:List<Double>,n:Int):Double{if(x.size<n+1)return 0.0;var ag=0.0;var al=0.0;for(i in 1..n){val d=x[i]-x[i-1];if(d>=0)ag+=d else al-=d};ag/=n;al/=n;for(i in n+1 until x.size){val d=x[i]-x[i-1];ag=(ag*(n-1)+(if(d>0)d else 0.0))/n;al=(al*(n-1)+(if(d<0)-d else 0.0))/n};return if(al==0.0)100.0 else 100-100/(1+ag/al)}
