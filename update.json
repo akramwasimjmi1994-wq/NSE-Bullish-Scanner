@@ -2,7 +2,7 @@
   "version": "3.4.6",
   "url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/v3.4.6/NSE_Bullish_Scanner_Update.zip",
   "sha256": "",
-  "android_version": "1.0.1",
-  "android_url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/android-v1.0.1/NSE-Bullish-Scanner-Android.apk",
-  "notes": "Professional trading-terminal UI refresh and Android scanner."
+  "android_version": "1.0.2",
+  "android_url": "https://github.com/akramwasimjmi1994-wq/NSE-Bullish-Scanner/releases/download/android-v1.0.2/NSE-Bullish-Scanner-Android.apk",
+  "notes": "Added paper trading simulator with virtual ₹1,00,000 capital."
 }
