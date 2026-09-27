@@ -404,9 +404,44 @@ class App(tk.Tk):
         style.map("Accent.TButton",background=[("active","#2bbbad")])
         style.configure("Danger.TButton",background="#ef5350",foreground="#ffffff",padding=(12,8),borderwidth=0)
         style.map("Danger.TButton",background=[("active","#ff625f")])
-        style.configure("TCombobox",fieldbackground="#1e222d",background="#1e222d",foreground="#d1d4dc")
-        style.configure("TEntry",fieldbackground="#1e222d",foreground="#d1d4dc",insertcolor="#ffffff")
-        style.configure("TSpinbox",fieldbackground="#1e222d",foreground="#d1d4dc")
+        # High-contrast input controls. Some ttk themes ignore the plain
+        # foreground option for readonly/selected Combobox states, so map
+        # every relevant state explicitly.
+        style.configure("TCombobox",
+                        fieldbackground="#1e222d",
+                        background="#1e222d",
+                        foreground="#f5f7fa",
+                        arrowcolor="#f5f7fa")
+        style.map("TCombobox",
+                  fieldbackground=[("readonly","#1e222d"),("active","#252b38"),("focus","#252b38")],
+                  foreground=[("readonly","#f5f7fa"),("active","#ffffff"),("focus","#ffffff")],
+                  selectbackground=[("readonly","#263342"),("focus","#263342")],
+                  selectforeground=[("readonly","#ffffff"),("focus","#ffffff")])
+        style.configure("TEntry",
+                        fieldbackground="#1e222d",
+                        foreground="#f5f7fa",
+                        insertcolor="#ffffff")
+        style.map("TEntry",
+                  fieldbackground=[("focus","#252b38")],
+                  foreground=[("focus","#ffffff")],
+                  selectbackground=[("focus","#26a69a")],
+                  selectforeground=[("focus","#ffffff")])
+        style.configure("TSpinbox",
+                        fieldbackground="#1e222d",
+                        background="#1e222d",
+                        foreground="#f5f7fa",
+                        arrowcolor="#f5f7fa")
+        style.map("TSpinbox",
+                  fieldbackground=[("focus","#252b38")],
+                  foreground=[("focus","#ffffff")],
+                  selectbackground=[("focus","#26a69a")],
+                  selectforeground=[("focus","#ffffff")])
+        # ttk Combobox uses a Tk listbox for its popup; set that popup's
+        # colors as well so manually selected values remain readable.
+        self.option_add("*TCombobox*Listbox.background", "#1e222d")
+        self.option_add("*TCombobox*Listbox.foreground", "#f5f7fa")
+        self.option_add("*TCombobox*Listbox.selectBackground", "#26a69a")
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
         style.configure("Treeview",background="#131722",fieldbackground="#131722",foreground="#d1d4dc",rowheight=42,borderwidth=0,font=("Segoe UI",10))
         style.configure("Treeview.Heading",background="#1e222d",foreground="#787b86",relief="flat",padding=(10,9),font=("Segoe UI",9,"bold"))
         style.map("Treeview",background=[("selected","#263342")],foreground=[("selected","#ffffff")])
