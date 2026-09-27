@@ -630,7 +630,9 @@ class App(tk.Tk):
 
 
     def start_dashboard(self):
-        self.dash_running=True; self.dash_status.config(text="● Running"); self.dash_worker()
+        self.dash_running=True
+        self.dash_status.config(text="● Starting...")
+        self.dash_worker()
 
     def stop_dashboard(self):
         self.dash_running=False; self.dash_status.config(text="● Stopped")
@@ -765,7 +767,7 @@ class App(tk.Tk):
             symbols=get_index_symbols(universe)
             interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[tf]
             period={"15 min":"60d","1 hour":"730d","1 day":"1y"}[tf]
-            self.dash_status.config(text=f"● Connecting | {len(symbols)} stocks")
+            self.q.put(("dashboard_status",f"● Connecting | {len(symbols)} stocks"))
             regime=get_market_regime()
             results=[]
             for i in range(0,len(symbols),50):
@@ -934,16 +936,16 @@ class App(tk.Tk):
             interval={"15 min":"15m","1 hour":"60m","1 day":"1d"}[self.btf.get()]
             universe=self.btu.get(); symbols=get_index_symbols(universe); total=len(symbols)
             self.q.put(("status",f"Backtesting {total} stocks from {universe}..."))
+            regime_data=fetch_historical_market_regime(
+                (pd.to_datetime(self.start.get())-timedelta(days=80)).strftime("%Y-%m-%d"),
+                (pd.to_datetime(self.end.get())+timedelta(days=2)).strftime("%Y-%m-%d"),
+            )
             for idx,sym in enumerate(symbols,1):
                 self.q.put(("status",f"Backtesting {idx}/{total}: {sym}"))
                 try:
                     d=fetch(sym,interval,start=self.start.get(),end=self.end.get())
                     if d.empty or len(d)<61: continue
                     d=calc(d)
-                    regime_data=fetch_historical_market_regime(
-                        (pd.to_datetime(self.start.get())-timedelta(days=80)).strftime("%Y-%m-%d"),
-                        (pd.to_datetime(self.end.get())+timedelta(days=2)).strftime("%Y-%m-%d"),
-                    )
                     daily=fetch(sym,"1d",
                                 start=(pd.to_datetime(self.start.get())-timedelta(days=30)).strftime("%Y-%m-%d"),
                                 end=(pd.to_datetime(self.end.get())+timedelta(days=2)).strftime("%Y-%m-%d"))
@@ -1003,6 +1005,7 @@ class App(tk.Tk):
                     for item in self.tree.get_children(): self.tree.delete(item)
                     for row in data: self.tree.insert("", "end", values=row)
                 elif typ=="status": self.status.config(text=data)
+                elif typ=="dashboard_status": self.dash_status.config(text=data)
                 elif typ=="scan_total":
                     self.scan_progress["maximum"]=max(1,data); self.scan_progress["value"]=0; self.progress_label.config(text=f"0 / {data} stocks scanned")
                 elif typ=="scan_progress":
