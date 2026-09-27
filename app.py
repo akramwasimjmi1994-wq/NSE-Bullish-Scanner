@@ -1009,6 +1009,46 @@ class App(tk.Tk):
             self.q.put(("done",self.trades)); self.q.put(("status",f"Backtest complete - {len(self.trades)} trades from {universe}."))
         except Exception as e:
             log("bt_worker: "+traceback.format_exc()); self.q.put(("msg",f"Backtest failed: {e}"))
+    def summarize_backtest(self, trades):
+        """Return baseline performance metrics without parameter optimization.
+        Drawdown/monthly figures are based on the sequential trade-return
+        series and are therefore diagnostic, not a portfolio simulation.
+        """
+        if not trades:
+            return {"count":0,"wins":0,"win_rate":0.0,"profit_factor":0.0,
+                    "max_drawdown":0.0,"monthly":[]}
+        df=pd.DataFrame(trades).copy()
+        ret=pd.to_numeric(df["ReturnPct"],errors="coerce").fillna(0.0)
+        wins=int((ret>0).sum())
+        gross_profit=float(ret[ret>0].sum())
+        gross_loss=float(-ret[ret<0].sum())
+        pf=(gross_profit/gross_loss) if gross_loss else float("inf")
+        equity=(1.0+ret/100.0).cumprod()
+        peak=equity.cummax()
+        dd=(equity/peak-1.0)*100.0
+        max_dd=float(dd.min())
+        dates=pd.to_datetime(df["SignalTime"],errors="coerce")
+        month_df=pd.DataFrame({"date":dates,"ret":ret}).dropna(subset=["date"])
+        monthly=[]
+        if not month_df.empty:
+            for period,g in month_df.groupby(month_df["date"].dt.to_period("M")):
+                mret=float(((1.0+g["ret"]/100.0).prod()-1.0)*100.0)
+                monthly.append({
+                    "month":str(period),
+                    "trades":int(len(g)),
+                    "wins":int((g["ret"]>0).sum()),
+                    "win_rate":float((g["ret"]>0).mean()*100.0),
+                    "return_pct":mret,
+                })
+        return {
+            "count":int(len(df)),
+            "wins":wins,
+            "win_rate":wins/len(df)*100.0,
+            "profit_factor":pf,
+            "max_drawdown":max_dd,
+            "monthly":monthly,
+        }
+
     def export(self):
         if not self.trades: messagebox.showinfo("Backtest","Run a backtest first."); return
         p=filedialog.asksaveasfilename(defaultextension=".csv",filetypes=[("CSV","*.csv")])
@@ -1079,10 +1119,29 @@ class App(tk.Tk):
                 elif typ=="done":
                     self.trades=data
                     if data:
-                        df=pd.DataFrame(data); wins=(df.ReturnPct>0).sum(); gp=df.loc[df.ReturnPct>0,"ReturnPct"].sum(); gl=abs(df.loc[df.ReturnPct<0,"ReturnPct"].sum())
-                        self.summary.config(text=f"Trades: {len(df)} | Wins: {wins} | Win rate: {wins/len(df)*100:.2f}% | Avg return: {df.ReturnPct.mean():.2f}% | Profit factor: {(gp/gl if gl else float('inf')):.2f}")
-                    else: self.summary.config(text="No signals found.")
-                    for r in data: self.bt_tree.insert("", "end", values=(r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',f'{r["Exit"]:.2f}',f'{r["ReturnPct"]:.2f}%',r["Outcome"],r["CompositeScore"],r["BarsHeld"]))
+                        m=self.summarize_backtest(data)
+                        pf_txt="∞" if m["profit_factor"]==float("inf") else f"{m['profit_factor']:.2f}"
+                        self.summary.config(text=(
+                            f"Trades: {m['count']} | Wins: {m['wins']} | "
+                            f"Win rate: {m['win_rate']:.2f}% | "
+                            f"Profit factor: {pf_txt} | "
+                            f"Max trade-sequence DD: {m['max_drawdown']:.2f}%"
+                        ))
+                    else:
+                        self.summary.config(text="No signals found.")
+                    for r in data:
+                        self.bt_tree.insert("", "end", values=(
+                            r["Symbol"],r["SignalTime"],f'{r["Entry"]:.2f}',
+                            f'{r["Exit"]:.2f}',f'{r["ReturnPct"]:.2f}%',
+                            r["Outcome"],r["CompositeScore"],r["BarsHeld"]
+                        ))
+                    if data:
+                        monthly_text=" | ".join(
+                            f"{m['month']}: {m['return_pct']:+.2f}% ({m['trades']} trades)"
+                            for m in self.summarize_backtest(data)["monthly"]
+                        )
+                        if monthly_text:
+                            self.summary.config(text=self.summary.cget("text")+" | Monthly: "+monthly_text)
                 elif typ=="update":
                     info=data
                     if messagebox.askyesno("Update available",f"Version {info['version']} is available.\n\n{info.get('notes','')}\n\nUpdate now?"):
