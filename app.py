@@ -867,13 +867,14 @@ class App(tk.Tk):
             total=len(symbols)
             self.q.put(("scan_total",total))
             self.q.put(("status",f"Loaded {total} stocks from {universe}. Connecting to market data..."))
-            # Fetch regime once, but do not let it block the visible scan progress.
             regime=get_market_regime()
             self.q.put(("status",f"Market data connected. Scanning {total} stocks..."))
-            # Smaller batches prevent one large Yahoo request from stalling the UI.
+
             batch_size=50
             batches=[symbols[i:i+batch_size] for i in range(0,total,batch_size)]
-            rows=[]; completed=0; minimum=self.score.get()
+            rows=[]
+            completed=0
+            minimum=self.score.get()
 
             def load_batch(batch):
                 data_map=fetch_batch(batch,interval,period)
@@ -881,28 +882,39 @@ class App(tk.Tk):
                 return data_map,daily_map
 
             with ThreadPoolExecutor(max_workers=4) as pool:
-                futures=[pool.submit(load_batch,b) for b in batches]
-                for fut in as_completed(futures):
-                    if self.stop_flag: break
+                future_sizes={pool.submit(load_batch,b):len(b) for b in batches}
+                for fut in as_completed(future_sizes):
+                    batch_done=future_sizes[fut]
+                    if self.stop_flag:
+                        break
                     try:
                         data_map,daily_map=fut.result()
                     except Exception as e:
                         log(f"scan batch failed: {e}")
                         data_map,daily_map={},{}
+
+                    batch_rows=[]
                     for sym,d in data_map.items():
                         snap=build_signal_snapshot(sym,d,regime,daily_map.get(sym))
-                        if not snap: continue
-                        rows.append((snap["score"],sym,snap["row"],snap["signal"].qualifies,snap["liquid"]))
-                    completed+=len(data_map)
-                    # Advance even when Yahoo returns no data, so the user can
-                    # see that a batch finished rather than a frozen 0/N state.
-                    batch_done=min(total, completed)
+                        if not snap:
+                            continue
+                        item=(snap["score"],sym,snap["row"],snap["signal"].qualifies,snap["liquid"])
+                        rows.append(item)
+                        batch_rows.append(item)
+
+                    # Render usable stock rows immediately instead of waiting
+                    # for all Yahoo batches to finish.
+                    if batch_rows:
+                        self.q.put(("scan_rows",[item[2] for item in batch_rows]))
+
+                    completed=min(total,completed+batch_done)
                     confirmed=sum(1 for sc,_,_,q,l in rows if q and l and sc>=minimum)
                     candidates=sum(1 for sc,_,_,q,l in rows if l and sc>=max(0,minimum-10) and not (q and l and sc>=minimum))
-                    self.q.put(('scan_progress',batch_done,total,confirmed,candidates))
-            rows.sort(key=lambda z:(0 if z[3] and z[4] and z[0]>=minimum else 1, -z[0], z[1]))
-            for _,_,row,_,_ in rows:
-                self.q.put(("row",row))
+                    self.q.put(("scan_progress",completed,total,confirmed,candidates))
+
+            rows.sort(key=lambda z:(0 if z[3] and z[4] and z[0]>=minimum else 1,-z[0],z[1]))
+            self.q.put(("scan_finalize",[item[2] for item in rows]))
+
             buys=sum(1 for sc,_,_,q,l in rows if q and l and sc>=minimum)
             liquid_count=sum(1 for _,_,_,_,l in rows if l)
             if rows:
